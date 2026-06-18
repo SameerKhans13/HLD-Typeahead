@@ -1,0 +1,1443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Antigravity | Trie Autocomplete & Prefix Tree Visualizer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #070913;
+      --bg-card: rgba(22, 28, 45, 0.4);
+      --bg-card-hover: rgba(30, 41, 59, 0.6);
+      --border-color: rgba(99, 102, 241, 0.15);
+      --border-focus: rgba(6, 182, 212, 0.6);
+      --text-primary: #f8fafc;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --primary: #6366f1;
+      --primary-glow: rgba(99, 102, 241, 0.35);
+      --secondary: #06b6d4;
+      --accent: #d946ef;
+      --success: #10b981;
+      --font-sans: 'Plus Jakarta Sans', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      min-height: 100vh;
+      overflow-x: hidden;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      position: relative;
+    }
+
+    /* Beautiful Ambient Background Glows */
+    body::before {
+      content: '';
+      position: absolute;
+      top: -150px;
+      left: 10%;
+      width: 500px;
+      height: 500px;
+      background: radial-gradient(circle, rgba(99, 102, 241, 0.15) 0%, transparent 70%);     
+      filter: blur(50px);
+      z-index: -1;
+      pointer-events: none;
+    }
+
+    body::after {
+      content: '';
+      position: absolute;
+      bottom: 10%;
+      right: 5%;
+      width: 600px;
+      height: 600px;
+      background: radial-gradient(circle, rgba(6, 182, 212, 0.1) 0%, transparent 70%);       
+      filter: blur(60px);
+      z-index: -1;
+      pointer-events: none;
+    }
+
+    /* Container */
+    .app-container {
+      width: 100%;
+      max-width: 1200px;
+      padding: 3rem 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 2.5rem;
+      z-index: 10;
+    }
+
+    /* Header */
+    header {
+      text-align: center;
+      margin-bottom: 1rem;
+    }
+
+    .logo-container {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.75rem;
+      background: rgba(99, 102, 241, 0.08);
+      border: 1px solid rgba(99, 102, 241, 0.2);
+      padding: 0.5rem 1.25rem;
+      border-radius: 100px;
+      margin-bottom: 1rem;
+      backdrop-filter: blur(10px);
+    }
+
+    .logo-dot {
+      width: 8px;
+      height: 8px;
+      background: var(--secondary);
+      border-radius: 50%;
+      box-shadow: 0 0 10px var(--secondary);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 0.5; }
+      50% { transform: scale(1.5); opacity: 1; }
+    }
+
+    .logo-text {
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--text-primary);
+    }
+
+    h1 {
+      font-size: 3rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      background: linear-gradient(135deg, #ffffff 10%, #a5b4fc 50%, #22d3ee 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 0.75rem;
+    }
+
+    .subtitle {
+      font-size: 1.1rem;
+      color: var(--text-secondary);
+      max-width: 600px;
+      margin: 0 auto;
+      line-height: 1.6;
+    }
+
+    /* Grid Layout */
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: 1.15fr 1fr;
+      gap: 2rem;
+    }
+
+    @media (max-width: 968px) {
+      .dashboard-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Modern Card Base */
+    .glass-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 24px;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      padding: 2rem;
+      box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.3);
+      transition: border-color 0.3s ease, box-shadow 0.3s ease;
+    }
+
+    .glass-card:hover {
+      border-color: rgba(99, 102, 241, 0.25);
+    }
+
+    /* Search Component */
+    .search-section {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .section-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--text-primary);
+    }
+
+    .section-title div {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .section-title span {
+      background: linear-gradient(135deg, var(--primary), var(--secondary));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .search-wrapper {
+      position: relative;
+      width: 100%;
+    }
+
+    .search-input-container {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .search-icon {
+      position: absolute;
+      left: 1.25rem;
+      color: var(--text-muted);
+      pointer-events: none;
+      transition: color 0.3s ease;
+      z-index: 5;
+    }
+
+    .search-input {
+      width: 100%;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid var(--border-color);
+      padding: 1.1rem 1.5rem 1.1rem 3.25rem;
+      border-radius: 16px;
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      font-size: 1.1rem;
+      font-weight: 500;
+      outline: none;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+
+    .search-input:focus {
+      border-color: var(--border-focus);
+      background: rgba(15, 23, 42, 0.85);
+      box-shadow: 0 0 25px var(--primary-glow), inset 0 2px 4px rgba(0, 0, 0, 0.05);
+    }
+
+    .search-input:focus + .search-icon {
+      color: var(--secondary);
+    }
+
+    /* Submit Button (Throttled) */
+    .search-submit-btn {
+      background: linear-gradient(135deg, var(--primary), var(--secondary));
+      border: none;
+      border-radius: 16px;
+      padding: 1.1rem 1.75rem;
+      color: white;
+      font-family: var(--font-sans);
+      font-weight: 700;
+      font-size: 1rem;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 15px rgba(6, 182, 212, 0.25);
+    }
+
+    .search-submit-btn:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(6, 182, 212, 0.4);
+    }
+
+    .search-submit-btn:active:not(:disabled) {
+      transform: translateY(0);
+    }
+
+    .search-submit-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      background: var(--text-muted);
+      box-shadow: none;
+    }
+
+    /* Suggestion Dropdown */
+    .suggestions-container {
+      position: absolute;
+      top: calc(100% + 0.5rem);
+      left: 0;
+      right: 0;
+      background: rgba(11, 15, 30, 0.95);
+      border: 1px solid rgba(6, 182, 212, 0.25);
+      border-radius: 16px;
+      overflow: hidden;
+      z-index: 100;
+      opacity: 0;
+      transform: translateY(-10px) scale(0.98);
+      pointer-events: none;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      backdrop-filter: blur(25px);
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
+    }
+
+    .suggestions-container.active {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      pointer-events: auto;
+    }
+
+    .suggestion-item {
+      padding: 1rem 1.25rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+      transition: all 0.2s ease;
+    }
+
+    .suggestion-item:last-child {
+      border-bottom: none;
+    }
+
+    .suggestion-item.selected {
+      background: rgba(99, 102, 241, 0.15);
+      border-left: 4px solid var(--secondary);
+      padding-left: 1rem;
+    }
+
+    .suggestion-left {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .match-highlight {
+      color: var(--secondary);
+      font-weight: 700;
+    }
+
+    .query-text {
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .suggestion-right {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .count-badge {
+      background: rgba(6, 182, 212, 0.1);
+      border: 1px solid rgba(6, 182, 212, 0.2);
+      color: var(--secondary);
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      font-weight: 600;
+      padding: 0.25rem 0.6rem;
+      border-radius: 6px;
+    }
+
+    /* Control Panel Cards */
+    .control-cards-container {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.5rem;
+    }
+
+    /* Debounce & Efficiency Panel */
+    .debounce-control-panel {
+      background: rgba(15, 23, 42, 0.35);
+      border: 1px solid rgba(99, 102, 241, 0.1);
+      border-radius: 20px;
+      padding: 1.5rem;
+      display: flex;
+      gap: 1.5rem;
+      align-items: center;
+    }
+
+    @media (max-width: 580px) {
+      .debounce-control-panel {
+        flex-direction: column;
+        align-items: stretch;
+      }
+    }
+
+    .debounce-sliders-box {
+      flex-grow: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .control-row {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .control-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .control-label {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+    }
+
+    .control-val {
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: var(--secondary);
+    }
+
+    .debounce-slider {
+      -webkit-appearance: none;
+      width: 100%;
+      height: 6px;
+      border-radius: 100px;
+      background: rgba(255, 255, 255, 0.08);
+      outline: none;
+      transition: background 0.3s;
+    }
+
+    .debounce-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--secondary);
+      cursor: pointer;
+      box-shadow: 0 0 10px rgba(6, 182, 212, 0.5);
+      transition: transform 0.1s ease;
+    }
+
+    .debounce-slider::-webkit-slider-thumb:hover {
+      transform: scale(1.2);
+    }
+
+    /* Glowing Progress Ring / Gauge */
+    .gauge-wrapper {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .circular-gauge-container {
+      position: relative;
+      width: 110px;
+      height: 110px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .gauge-svg {
+      transform: rotate(-90deg);
+    }
+
+    .gauge-bg {
+      fill: none;
+      stroke: rgba(255, 255, 255, 0.04);
+      stroke-width: 8;
+    }
+
+    .gauge-fill {
+      fill: none;
+      stroke: url(#gauge-grad);
+      stroke-width: 8;
+      stroke-linecap: round;
+      transition: stroke-dashoffset 0.5s ease;
+    }
+
+    .gauge-percentage {
+      position: absolute;
+      font-family: var(--font-mono);
+      font-size: 1.35rem;
+      font-weight: 800;
+      color: var(--secondary);
+      text-shadow: 0 0 15px rgba(6, 182, 212, 0.4);
+    }
+
+    .gauge-label {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+    }
+
+    /* Telemetry Items */
+    .metrics-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .metric-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.75rem 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .metric-row:last-child {
+      border-bottom: none;
+    }
+
+    .metric-label {
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .metric-value {
+      font-family: var(--font-mono);
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .metric-value.highlight {
+      color: var(--secondary);
+    }
+
+    .metric-value.speed {
+      color: var(--success);
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+    }
+
+    /* Dynamic Trie Path Visualizer */
+    .visualizer-section {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .trie-nodes-display {
+      min-height: 200px;
+      background: rgba(10, 12, 26, 0.8);
+      border: 1px dashed rgba(99, 102, 241, 0.3);
+      border-radius: 16px;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .node-chain {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      width: 100%;
+    }
+
+    .visual-node {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.9));     
+      border: 2px solid var(--primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-mono);
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      box-shadow: 0 0 15px rgba(99, 102, 241, 0.15);
+      position: relative;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+    }
+
+    @keyframes popIn {
+      from { transform: scale(0); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+
+    .visual-node.root-node {
+      border-color: var(--accent);
+      background: rgba(217, 70, 239, 0.1);
+    }
+
+    .visual-node.active-path {
+      border-color: var(--secondary);
+      background: rgba(6, 182, 212, 0.15);
+      box-shadow: 0 0 20px rgba(6, 182, 212, 0.4);
+      transform: scale(1.05);
+    }
+
+    .visual-node.terminal {
+      border-color: var(--success);
+      background: rgba(16, 185, 129, 0.15);
+      box-shadow: 0 0 20px rgba(16, 185, 129, 0.4);
+    }
+
+    .node-arrow {
+      color: var(--primary);
+      font-size: 1rem;
+      opacity: 0.6;
+      animation: fadeIn 0.3s ease both;
+    }
+
+    .visualizer-placeholder {
+      color: var(--text-muted);
+      text-align: center;
+      max-width: 320px;
+      font-size: 0.9rem;
+      line-height: 1.5;
+    }
+
+    .visualizer-placeholder svg {
+      width: 48px;
+      height: 48px;
+      margin-bottom: 1rem;
+      color: var(--text-muted);
+      opacity: 0.4;
+    }
+
+    /* Explanation Tooltips */
+    .trie-guide-card {
+      background: rgba(99, 102, 241, 0.03);
+      border: 1px solid rgba(99, 102, 241, 0.08);
+      border-radius: 16px;
+      padding: 1.25rem;
+    }
+
+    .guide-header {
+      font-weight: 600;
+      font-size: 0.95rem;
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: var(--text-primary);
+    }
+
+    .guide-text {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    /* Query Completion Info */
+    .completion-detail {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+      text-align: center;
+    }
+
+    /* Interactive Event Logger */
+    .console-logs-panel {
+      margin-top: auto;
+      background: rgba(5, 5, 10, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 16px;
+      padding: 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      max-height: 120px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+
+    .log-item {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    .log-time {
+      color: var(--text-muted);
+    }
+
+    .log-tag {
+      font-weight: 700;
+      text-transform: uppercase;
+      font-size: 0.75rem;
+    }
+
+    .log-tag.system { color: var(--accent); }
+    .log-tag.api { color: var(--secondary); }
+    .log-tag.submit { color: var(--success); }
+
+    /* Hash Ring Visualizer Card & Styles */
+    .hashring-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    .ring-svg-wrapper {
+      position: relative;
+      margin: 1rem 0;
+    }
+
+    .ring-svg {
+      display: block;
+    }
+
+    .query-beacon {
+      animation: beaconPulse 1.5s infinite;
+    }
+
+    @keyframes beaconPulse {
+      0% { r: 6; opacity: 1; filter: drop-shadow(0 0 2px #fff); }
+      50% { r: 10; opacity: 0.6; filter: drop-shadow(0 0 10px rgba(6, 182, 212, 0.8)); }     
+      100% { r: 6; opacity: 1; filter: drop-shadow(0 0 2px #fff); }
+    }
+
+    .ring-legends {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-top: 0.5rem;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+    }
+
+    .legend-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .ring-routed-banner {
+      width: 100%;
+      background: rgba(6, 182, 212, 0.08);
+      border: 1px solid rgba(6, 182, 212, 0.2);
+      border-radius: 12px;
+      padding: 0.75rem;
+      margin-top: 0.75rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.85rem;
+    }
+
+    .ring-routed-val {
+      font-family: var(--font-mono);
+      font-weight: 700;
+      color: var(--secondary);
+    }
+  </style>
+</head>
+<body>
+
+  <div class="app-container">
+    <header>
+      <div class="logo-container">
+        <div class="logo-dot"></div>
+        <span class="logo-text">Advanced Agentic Trie Systems</span>
+      </div>
+      <h1>Antigravity Typeahead</h1>
+      <p class="subtitle">Ultra-fast, in-memory Prefix Tree (Trie) visualizer and consistent hashing routing engine. Powered by Bun & Elysia JS.</p>
+    </header>
+
+    <div class="dashboard-grid">
+      <!-- Left Column: Search & Controls -->
+      <div class="glass-card search-section">
+        <div class="section-title">
+          <div>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <span>Autocomplete Search</span>
+          </div>
+        </div>
+
+        <!-- Search Form (with submit throttling) -->
+        <div class="search-wrapper">
+          <form id="search-form" class="search-input-container">
+            <svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>   
+            <input
+              type="text"
+              class="search-input"
+              id="autocomplete-input"
+              placeholder="Type to query Trie... (e.g. 'cat', 'car', 'blue')"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button type="submit" class="search-submit-btn" id="search-submit-btn">Search</button>
+
+            <!-- Live Dynamic Suggestions Dropdown -->
+            <div class="suggestions-container" id="suggestions-box"></div>
+          </form>
+        </div>
+
+        <div class="control-cards-container">
+          <!-- Debounce & Efficiency Control Panel -->
+          <div class="debounce-control-panel">
+            <div class="debounce-sliders-box">
+              <div class="control-row">
+                <div class="control-header">
+                  <span class="control-label">Debounce Search Delay</span>
+                  <span class="control-val" id="debounce-val">150 ms</span>
+                </div>
+                <input
+                  type="range"
+                  class="debounce-slider"
+                  id="debounce-slider"
+                  min="50"
+                  max="1000"
+                  step="50"
+                  value="150"
+                />
+              </div>
+
+              <div class="control-row" style="gap: 0.35rem;">
+                <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text-secondary);">
+                  <span>Total keystrokes:</span>
+                  <span id="stat-keystrokes" style="font-family: var(--font-mono); font-weight: 700; color: var(--text-primary)">0</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text-secondary);">
+                  <span>Dispatched API requests:</span>
+                  <span id="stat-requests" style="font-family: var(--font-mono); font-weight: 700; color: var(--text-primary)">0</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text-secondary);">
+                  <span>Suppressed requests:</span>
+                  <span id="stat-saved" style="font-family: var(--font-mono); font-weight: 700; color: var(--success)">0</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Glowing Circle Requests Saved Gauge -->
+            <div class="gauge-wrapper">
+              <div class="circular-gauge-container">
+                <svg class="gauge-svg" width="110" height="110">
+                  <defs>
+                    <linearGradient id="gauge-grad" x1="0%" y1="0%" x2="100%" y2="100%">     
+                      <stop offset="0%" stop-color="#6366f1" />
+                      <stop offset="100%" stop-color="#06b6d4" />
+                    </linearGradient>
+                  </defs>
+                  <circle class="gauge-bg" cx="55" cy="55" r="45" />
+                  <circle class="gauge-fill" id="gauge-fill" cx="55" cy="55" r="45" stroke-dasharray="282.7" stroke-dashoffset="282.7" />
+                </svg>
+                <div class="gauge-percentage" id="gauge-percentage">0%</div>
+              </div>
+              <span class="gauge-label">Requests Saved</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Telemetry & Performance Metrics Panel -->
+        <div class="metrics-panel">
+          <div class="section-title" style="font-size: 1.1rem;">
+            <div>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
+              <span>Telemetry & Performance Metrics</span>
+            </div>
+          </div>
+
+          <div class="metric-row">
+            <span class="metric-label">API Lookup Latency</span>
+            <span class="metric-value speed" id="metric-latency">0.00 ms</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">Trie Walk Complexity</span>
+            <span class="metric-value highlight" id="metric-complexity">O(1) cached</span>   
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">Query Characters / Trie Depth</span>
+            <span class="metric-value" id="metric-depth">0</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">Pre-Cached Completion Count</span>
+            <span class="metric-value" id="metric-results">0 / 10 max</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column: Visualizers & Logs -->
+      <div class="glass-card visualizer-section">
+        <div class="section-title">
+          <div>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 22 22 22"></polygon></svg>
+            <span>Trie Traversal Visualizer</span>
+          </div>
+        </div>
+
+        <!-- Dynamic Tree Path Visualization Display -->
+        <div class="trie-nodes-display" id="visualizer-display">
+          <div class="visualizer-placeholder" id="visualizer-placeholder">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+            <p>Start typing to visualize Trie prefix matches.</p>
+          </div>
+        </div>
+
+        <!-- Consistent Hashing Ring Visualizer -->
+        <div class="section-title" style="font-size: 1.1rem; margin-top: 0.5rem;">
+          <div>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path><path d="M2 12h20"></path></svg>
+            <span>Consistent Hash Ring Routing</span>
+          </div>
+        </div>
+
+        <div class="hashring-container">
+          <div class="ring-svg-wrapper">
+            <svg class="ring-svg" id="ring-svg" width="240" height="240" viewBox="0 0 240 240">
+              <!-- Background Ring -->
+              <circle cx="120" cy="120" r="95" fill="none" stroke="rgba(255, 255, 255, 0.05)" stroke-width="6" />
+              <!-- Virtual Nodes Group -->
+              <g id="ring-vnodes-group"></g>
+              <!-- Core Overlay Group (query beacon and routing arcs) -->
+              <g id="ring-routing-group"></g>
+            </svg>
+          </div>
+
+          <!-- Color Coding Legends -->
+          <div class="ring-legends">
+            <div class="legend-item"><div class="legend-dot" style="background: #06b6d4"></div><span>Node 0</span></div>
+            <div class="legend-item"><div class="legend-dot" style="background: #6366f1"></div><span>Node 1</span></div>
+            <div class="legend-item"><div class="legend-dot" style="background: #d946ef"></div><span>Node 2</span></div>
+            <div class="legend-item"><div class="legend-dot" style="background: #fff; border: 1px solid var(--border-focus)"></div><span>Query Hash</span></div>
+          </div>
+
+          <!-- Routing details banner -->
+          <div class="ring-routed-banner">
+            <div>Prefix Hash: <span id="ring-hash-val" style="font-family: var(--font-mono)">N/A</span></div>
+            <div>Target: <span class="ring-routed-val" id="ring-node-val">N/A</span></div>   
+          </div>
+        </div>
+
+        <!-- Console Log Dashboard -->
+        <div class="console-logs-panel" id="console-logs">
+          <div class="log-item">
+            <span class="log-time">[Init]</span>
+            <span class="log-tag system">System</span>
+            <span>Antigravity Trie Console initialized. Ready.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Pure Javascript Implementations of tested client-utils
+    function debounce(fn, delayGetter) {
+      let timer;
+      return function (...args) {
+        clearTimeout(timer);
+        const delay = typeof delayGetter === 'function' ? delayGetter() : delayGetter;       
+        timer = setTimeout(() => fn(...args), delay);
+      };
+    }
+
+    function throttle(fn, limit) {
+      let inThrottle = false;
+      return function (...args) {
+        if (!inThrottle) {
+          fn(...args);
+          inThrottle = true;
+          setTimeout(() => {
+            inThrottle = false;
+          }, limit);
+        }
+      };
+    }
+
+    function calculateRequestsSaved(keystrokes, actualRequests) {
+      if (keystrokes <= 0 || actualRequests < 0 || actualRequests > keystrokes) {
+        return { saved: 0, percentage: "0%" };
+      }
+      const saved = keystrokes - actualRequests;
+      const pct = Math.round((saved / keystrokes) * 100);
+      return { saved, percentage: `${pct}%` };
+    }
+
+    // UI Elements
+    const input = document.getElementById('autocomplete-input');
+    const suggestionsBox = document.getElementById('suggestions-box');
+    const visualizerDisplay = document.getElementById('visualizer-display');
+    const visualizerPlaceholder = document.getElementById('visualizer-placeholder');
+    const searchForm = document.getElementById('search-form');
+    const submitBtn = document.getElementById('search-submit-btn');
+    const consoleLogs = document.getElementById('console-logs');
+
+    // Debounce slider & gauge elements
+    const debounceSlider = document.getElementById('debounce-slider');
+    const debounceVal = document.getElementById('debounce-val');
+    const gaugeFill = document.getElementById('gauge-fill');
+    const gaugePercentage = document.getElementById('gauge-percentage');
+    const statKeystrokes = document.getElementById('stat-keystrokes');
+    const statRequests = document.getElementById('stat-requests');
+    const statSaved = document.getElementById('stat-saved');
+
+    // Hash Ring Elements
+    const ringVnodesGroup = document.getElementById('ring-vnodes-group');
+    const ringRoutingGroup = document.getElementById('ring-routing-group');
+    const ringHashVal = document.getElementById('ring-hash-val');
+    const ringNodeVal = document.getElementById('ring-node-val');
+
+    // Telemetry items
+    const metricLatency = document.getElementById('metric-latency');
+    const metricComplexity = document.getElementById('metric-complexity');
+    const metricDepth = document.getElementById('metric-depth');
+    const metricResults = document.getElementById('metric-results');
+
+    // State Variables
+    let currentSuggestions = [];
+    let selectedIndex = -1;
+    let keystrokeCount = 0;
+    let requestCount = 0;
+
+    // Node Color Palette Maps
+    const nodeColors = {
+      'cache-node-0': '#06b6d4',
+      'cache-node-1': '#6366f1',
+      'cache-node-2': '#d946ef'
+    };
+
+    // Log Manager
+    function addLog(tag, message) {
+      const now = new Date();
+      const timeStr = now.toTimeString().split(' ')[0];
+      const logRow = document.createElement('div');
+      logRow.className = 'log-item';
+      logRow.innerHTML = `
+        <span class="log-time">[${timeStr}]</span>
+        <span class="log-tag ${tag.toLowerCase()}">${tag}</span>
+        <span>${message}</span>
+      `;
+      consoleLogs.appendChild(logRow);
+      consoleLogs.scrollTop = consoleLogs.scrollHeight;
+    }
+
+    // Update efficiency metrics & gauge
+    function updateEfficiency() {
+      const metrics = calculateRequestsSaved(keystrokeCount, requestCount);
+      statKeystrokes.innerText = keystrokeCount;
+      statRequests.innerText = requestCount;
+      statSaved.innerText = metrics.saved;
+
+      const pctVal = parseInt(metrics.percentage);
+      const circumference = 282.7;
+      const offset = circumference - (pctVal / 100) * circumference;
+
+      gaugeFill.style.strokeDashoffset = offset;
+      gaugePercentage.innerText = metrics.percentage;
+    }
+
+    // Slider listener
+    debounceSlider.addEventListener('input', (e) => {
+      const val = e.target.value;
+      debounceVal.innerText = `${val} ms`;
+    });
+
+    // Keyboard navigation and events
+    input.addEventListener('keydown', (e) => {
+      if (!currentSuggestions.length) return;
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        selectedIndex = (selectedIndex + 1) % currentSuggestions.length;
+        updateSelectedSuggestion();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        selectedIndex = (selectedIndex - 1 + currentSuggestions.length) % currentSuggestions.length;
+        updateSelectedSuggestion();
+      } else if (e.key === 'Enter') {
+        if (selectedIndex >= 0 && selectedIndex < currentSuggestions.length) {
+          e.preventDefault();
+          selectSuggestion(currentSuggestions[selectedIndex]);
+        }
+      } else if (e.key === 'Escape') {
+        closeSuggestions();
+      }
+    });
+
+    function updateSelectedSuggestion() {
+      const items = suggestionsBox.querySelectorAll('.suggestion-item');
+      items.forEach((item, index) => {
+        if (index === selectedIndex) {
+          item.classList.add('selected');
+          item.scrollIntoView({ block: 'nearest' });
+          visualizeTriePath(currentSuggestions[index].query, true);
+        } else {
+          item.classList.remove('selected');
+        }
+      });
+    }
+
+    function selectSuggestion(suggestion) {
+      input.value = suggestion.query;
+      closeSuggestions();
+      visualizeTriePath(suggestion.query, false, true);
+      addLog('API', `Selected suggestion: "${suggestion.query}"`);
+    }
+
+    // Input dropdown close
+    function closeSuggestions() {
+      suggestionsBox.classList.remove('active');
+      selectedIndex = -1;
+    }
+
+    // Dynamic slider-based debounced execution
+    const runDebouncedFetch = debounce((query) => {
+      fetchSuggestions(query);
+      fetchHashRingRouting(query);
+    }, () => parseInt(debounceSlider.value));
+
+    // Handle Input Box Keystrokes
+    input.addEventListener('input', (e) => {
+      const query = e.target.value;
+      keystrokeCount++;
+      updateEfficiency();
+
+      const trimmed = query.trim();
+      if (!trimmed) {
+        closeSuggestions();
+        resetTelemetry();
+        resetVisualizer();
+        resetHashRingUI();
+        return;
+      }
+
+      runDebouncedFetch(query);
+    });
+
+    // Fetch autocomplete completions
+    async function fetchSuggestions(query) {
+      const trimmed = query.trim();
+      if (!trimmed) return;
+
+      requestCount++;
+      updateEfficiency();
+
+      const startTime = performance.now();
+      addLog('API', `Dispatched prefix lookup: "${trimmed}"`);
+
+      try {
+        const response = await fetch(`/suggest?q=${encodeURIComponent(trimmed)}`);
+        const data = await response.json();
+        const endTime = performance.now();
+        const latency = (endTime - startTime).toFixed(2);
+
+        currentSuggestions = data;
+        selectedIndex = -1;
+
+        renderSuggestions(trimmed, data);
+        updateTelemetry(trimmed, data, latency);
+        visualizeTriePath(trimmed, false);
+      } catch (err) {
+        console.error("Failed to fetch suggestions:", err);
+        addLog('System', `Error fetching suggestions: ${err.message}`);
+      }
+    }
+
+    // Fetch Consistent Hashing Routing Debug stats
+    async function fetchHashRingRouting(prefix) {
+      const cleanPrefix = prefix.toLowerCase().trim();
+      if (!cleanPrefix) return;
+
+      try {
+        const response = await fetch(`/cache/debug?prefix=${encodeURIComponent(cleanPrefix)}`);
+        const data = await response.json();
+        renderHashRing(data);
+      } catch (err) {
+        console.error("Failed to fetch hash ring stats:", err);
+      }
+    }
+
+    // Render suggestions list
+    function renderSuggestions(query, completions) {
+      if (completions.length === 0) {
+        suggestionsBox.innerHTML = `<div style="padding: 1.25rem; color: var(--text-muted); text-align: center; font-size: 0.95rem;">No matches found in prefix tree</div>`;
+        suggestionsBox.classList.add('active');
+        return;
+      }
+
+      const html = completions.map((comp, idx) => {
+        const cleanQuery = comp.query;
+        let leftPart = '';
+        let rightPart = cleanQuery;
+
+        const loweredQuery = cleanQuery.toLowerCase();
+        const loweredMatch = query.toLowerCase();
+
+        if (loweredQuery.startsWith(loweredMatch)) {
+          leftPart = cleanQuery.slice(0, query.length);
+          rightPart = cleanQuery.slice(query.length);
+        }
+
+        return `
+          <div class="suggestion-item" data-index="${idx}">
+            <div class="suggestion-left">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.6;"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              <span class="query-text">
+                <span class="match-highlight">${leftPart}</span>${rightPart}
+              </span>
+            </div>
+            <div class="suggestion-right">
+              <span class="count-badge">${comp.count.toLocaleString()} queries</span>        
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      suggestionsBox.innerHTML = html;
+      suggestionsBox.classList.add('active');
+
+      // Add click listeners
+      suggestionsBox.querySelectorAll('.suggestion-item').forEach(item => {
+        item.addEventListener('click', () => {
+          const idx = parseInt(item.getAttribute('data-index'));
+          selectSuggestion(completions[idx]);
+        });
+      });
+    }
+
+    // Update Telemetry Panel
+    function updateTelemetry(query, completions, latency) {
+      metricLatency.innerText = `${latency} ms`;
+      metricLatency.style.color = latency < 5 ? 'var(--success)' : (latency < 15 ? 'var(--secondary)' : 'var(--accent)');
+
+      metricComplexity.innerText = `O(${query.length}) Path Traversal`;
+      metricDepth.innerText = query.length;
+      metricResults.innerText = `${completions.length} / 10 max`;
+    }
+
+    function resetTelemetry() {
+      metricLatency.innerText = '0.00 ms';
+      metricLatency.style.color = 'var(--text-primary)';
+      metricComplexity.innerText = 'O(1) cached';
+      metricDepth.innerText = '0';
+      metricResults.innerText = '0 / 10 max';
+    }
+
+    // Dynamic Visualizer logic
+    function visualizeTriePath(term, isFocusedCompletions = false, isTerminal = false) {     
+      visualizerPlaceholder.style.display = 'none';
+
+      const clean = term.toLowerCase().trim();
+      const chars = clean.split('');
+
+      let html = '<div class="node-chain">';
+
+      // Root Node
+      html += `<div class="visual-node root-node" title="Root Node">Ø</div>`;
+
+      // Build chain
+      chars.forEach((char, idx) => {
+        html += `<div class="node-arrow">→</div>`;
+
+        let nodeClass = 'visual-node active-path';
+        if (isTerminal && idx === chars.length - 1) {
+          nodeClass = 'visual-node terminal';
+        }
+
+        html += `<div class="${nodeClass}">${char}</div>`;
+      });
+
+      html += '</div>';
+
+      const prefixContext = isFocusedCompletions ? 'Focused completion' : (isTerminal ? 'Selected leaf terminal' : 'Prefix path matched');
+      html += `<div class="completion-detail">${prefixContext} &bull; Depth: ${chars.length}</div>`;
+
+      visualizerDisplay.innerHTML = html;
+    }
+
+    // Reset visualizer
+    function resetVisualizer() {
+      visualizerDisplay.innerHTML = '';
+      visualizerDisplay.appendChild(visualizerPlaceholder);
+      visualizerPlaceholder.style.display = 'flex';
+    }
+
+    // Render Consistent Hashing Ring Visuals
+    function renderHashRing(data) {
+      const cx = 120;
+      const cy = 120;
+      const r = 95;
+      const maxHash = 4294967295; // 2^32 - 1
+
+      // 1. Draw all static virtual nodes
+      if (ringVnodesGroup.children.length === 0 && data.ring) {
+        let nodeHtml = '';
+        data.ring.forEach(v => {
+          const angle = (v.coordinate / maxHash) * 2 * Math.PI - Math.PI / 2;
+          const x = cx + r * Math.cos(angle);
+          const y = cy + r * Math.sin(angle);
+          const color = nodeColors[v.node] || '#ffffff';
+          nodeHtml += `<circle cx="${x}" cy="${y}" r="3.5" fill="${color}" stroke="#070913" stroke-width="0.5" title="${v.label} @ ${v.coordinate}" />`;
+        });
+        ringVnodesGroup.innerHTML = nodeHtml;
+      }
+
+      // 2. Draw dynamic routing elements
+      const qAngle = (data.hash / maxHash) * 2 * Math.PI - Math.PI / 2;
+      const qx = cx + r * Math.cos(qAngle);
+      const qy = cy + r * Math.sin(qAngle);
+
+      // Find selected node details
+      let targetNodeState = null;
+      if (data.ring) {
+        for (let i = 0; i < data.ring.length; i++) {
+          if (data.ring[i].node === data.assignedNode && data.ring[i].coordinate >= data.hash) {
+            targetNodeState = data.ring[i];
+            break;
+          }
+        }
+        if (!targetNodeState) {
+          for (let i = 0; i < data.ring.length; i++) {
+            if (data.ring[i].node === data.assignedNode) {
+              targetNodeState = data.ring[i];
+              break;
+            }
+          }
+        }
+      }
+
+      let routeHtml = '';
+
+      if (targetNodeState) {
+        const tAngle = (targetNodeState.coordinate / maxHash) * 2 * Math.PI - Math.PI / 2;   
+        const tx = cx + r * Math.cos(tAngle);
+        const ty = cy + r * Math.sin(tAngle);
+        const targetColor = nodeColors[data.assignedNode] || '#fff';
+
+        let startAngle = qAngle;
+        let endAngle = tAngle;
+
+        if (startAngle < -Math.PI/2) startAngle += 2 * Math.PI;
+        if (endAngle < -Math.PI/2) endAngle += 2 * Math.PI;
+        if (endAngle < startAngle) endAngle += 2 * Math.PI;
+
+        const largeArcFlag = (endAngle - startAngle) > Math.PI ? 1 : 0;
+
+        routeHtml += `
+          <!-- Clockwise Glowing Routing Arc -->
+          <path d="M ${qx} ${qy} A ${r} ${r} 0 ${largeArcFlag} 1 ${tx} ${ty}" fill="none" stroke="${targetColor}" stroke-width="4.5" stroke-linecap="round" opacity="0.8" style="filter: drop-shadow(0 0 6px ${targetColor});" />
+
+          <!-- Line to Query Hash -->
+          <line x1="${cx}" y1="${cy}" x2="${qx}" y2="${qy}" stroke="rgba(255,255,255,0.15)" stroke-dasharray="3,3" stroke-width="1.5" />
+
+          <!-- Line to Target Cache Node -->
+          <line x1="${cx}" y1="${cy}" x2="${tx}" y2="${ty}" stroke="${targetColor}" stroke-dasharray="3,3" stroke-width="1.5" opacity="0.5" />
+
+          <!-- Selected Target Node Highlight -->
+          <circle cx="${tx}" cy="${ty}" r="6.5" fill="none" stroke="${targetColor}" stroke-width="2" style="filter: drop-shadow(0 0 8px ${targetColor});" />
+        `;
+      }
+
+      // Pulsing Query Beacon
+      routeHtml += `
+        <circle cx="${qx}" cy="${qy}" r="5.5" fill="#ffffff" class="query-beacon" stroke="${nodeColors[data.assignedNode]}" stroke-width="1.5" />
+      `;
+
+      ringRoutingGroup.innerHTML = routeHtml;
+
+      // Update banner metrics
+      ringHashVal.innerText = `0x${data.hash.toString(16).toUpperCase()}`;
+      ringNodeVal.innerText = data.assignedNode;
+      ringNodeVal.style.color = nodeColors[data.assignedNode] || '#ffffff';
+
+      addLog('API', `Consistent hash ring routed query "${data.prefix}" to: ${data.assignedNode}`);
+    }
+
+    function resetHashRingUI() {
+      ringRoutingGroup.innerHTML = '';
+      ringHashVal.innerText = 'N/A';
+      ringNodeVal.innerText = 'N/A';
+      ringNodeVal.style.color = 'var(--text-secondary)';
+    }
+
+    // Throttle Search Submission logic
+    const handleSearchSubmit = throttle(async (query) => {
+      const cleanQuery = query.trim();
+      if (!cleanQuery) return;
+
+      addLog('Submit', `Dispatched search submission: "${cleanQuery}"`);
+
+      submitBtn.innerText = 'Searching...';
+      submitBtn.disabled = true;
+
+      try {
+        const response = await fetch('/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: cleanQuery })
+        });
+        const data = await response.json();
+        
+        addLog('Submit', `Search server responded: "${data.message}"`);
+        
+        // Refresh hash ring and telemetry
+        fetchHashRingRouting(cleanQuery);
+      } catch (err) {
+        console.error("Failed to submit search:", err);
+        addLog('System', `Error submitting search: ${err.message}`);
+      } finally {
+        submitBtn.innerText = 'Search';
+        submitBtn.disabled = false;
+      }
+    }, 2000);
+
+    searchForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const query = input.value;
+      if (!query.trim()) return;
+
+      closeSuggestions();
+      handleSearchSubmit(query);
+    });
+
+    // Hide dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+      if (!input.contains(e.target) && !suggestionsBox.contains(e.target)) {
+        closeSuggestions();
+      }
+    });
+
+    // Fetch initial ring layout on load
+    fetchHashRingRouting("init");
+    updateEfficiency();
+  </script>
+</body>
+</html>
