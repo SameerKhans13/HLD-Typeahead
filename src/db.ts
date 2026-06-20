@@ -1,49 +1,114 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, appendFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
+import postgres from "postgres";
 import { calculateDecayScore } from "./decay";
-
-export interface DatabaseRecord {
-  query: string;
-  count: number;
-  buckets?: { bucketId: number; count: number }[];
-}
 
 export class Database {
   private dbPath: string;
   private datasetPath?: string;
-  private walPath: string;
+  private walPath?: string;
+
+  // In-memory caches for fast read access and write buffering
   private cache: Map<string, number> = new Map();
-  
-  // Volatile RAM write buffer for query counts
+  private timeBuckets: Map<string, Map<number, number>> = new Map();
   private writeBuffer: Map<string, number> = new Map();
 
-  // Time Buckets mapping a query to minutes-since-epoch bucket ID -> count
-  private timeBuckets: Map<string, Map<number, number>> = new Map();
+  // PostgreSQL client
+  private sql?: postgres.Sql;
 
-  // Metrics & Analytics
-  private flushesCount = 0;
-  private totalSearchesSubmitted = 0;
-
-  constructor(dbPath: string, datasetPath?: string, walPath: string = "data/wal.log") {
+  constructor(dbPath: string, datasetPath?: string, walPath?: string) {
     this.dbPath = dbPath;
     this.datasetPath = datasetPath;
     this.walPath = walPath;
+
+    // Check for PostgreSQL connection string
+    const dbUrl = process.env.DATABASE_URL;
+    if (dbUrl) {
+      console.log(`[Database] Connecting to PostgreSQL at ${dbUrl.replace(/:[^:]+@/, ':****@')}`);
+      this.sql = postgres(dbUrl, {
+        max: 5,
+        idle_timeout: 20,
+        connect_timeout: 10
+      });
+    }
   }
 
   async load(): Promise<void> {
     this.cache.clear();
     this.timeBuckets.clear();
+    this.writeBuffer.clear();
 
+    if (this.sql) {
+      try {
+        await this.initializePostgresTables();
+        await this.loadFromPostgres();
+      } catch (err) {
+        console.error("[Database] Failed to load data from PostgreSQL. Falling back to local file...", err);
+        await this.loadFromFileSystem();
+      }
+    } else {
+      await this.loadFromFileSystem();
+    }
+  }
+
+  private async initializePostgresTables(): Promise<void> {
+    if (!this.sql) return;
+
+    // Create tables inside transactional block
+    await this.sql.begin(async (sql) => {
+      await sql`
+        CREATE TABLE IF NOT EXISTS search_queries (
+          query VARCHAR(255) PRIMARY KEY,
+          count INTEGER NOT NULL DEFAULT 0,
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )
+      `;
+      await sql`
+        CREATE TABLE IF NOT EXISTS time_buckets (
+          query VARCHAR(255) NOT NULL,
+          bucket_id INTEGER NOT NULL,
+          count INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (query, bucket_id)
+        )
+      `;
+    });
+    console.log("[Database] PostgreSQL tables initialized successfully.");
+  }
+
+  private async loadFromPostgres(): Promise<void> {
+    if (!this.sql) return;
+
+    console.log("[Database] Hydrating RAM cache from PostgreSQL search_queries...");
+    const queries = await this.sql`SELECT query, count FROM search_queries`;
+    for (const row of queries) {
+      this.cache.set(row.query, row.count);
+    }
+
+    console.log("[Database] Hydrating RAM cache from PostgreSQL time_buckets...");
+    const buckets = await this.sql`SELECT query, bucket_id, count FROM time_buckets`;
+    for (const row of buckets) {
+      let queryBucketsMap = this.timeBuckets.get(row.query);
+      if (!queryBucketsMap) {
+        queryBucketsMap = new Map<number, number>();
+        this.timeBuckets.set(row.query, queryBucketsMap);
+      }
+      queryBucketsMap.set(row.bucket_id, row.count);
+    }
+    console.log(`[Database] Hydration complete. Loaded ${this.cache.size} queries.`);
+  }
+
+  private async loadFromFileSystem(): Promise<void> {
     if (existsSync(this.dbPath)) {
       this.loadFromFile(this.dbPath);
     } else if (this.datasetPath && existsSync(this.datasetPath)) {
+      console.log(`[Database] Primary DB missing. Loading fallback dataset from ${this.datasetPath}`);
       this.loadFromFile(this.datasetPath);
     }
   }
 
   private loadFromFile(path: string): void {
     const content = readFileSync(path, "utf-8");
-    const records: DatabaseRecord[] = JSON.parse(content);
+    const records = JSON.parse(content);
     for (const record of records) {
       const query = record.query.toLowerCase().trim();
       if (query) {
@@ -60,15 +125,16 @@ export class Database {
   }
 
   async save(): Promise<void> {
+    if (this.sql) {
+      // Postgres relies on flush() to persist state, but we save on demand if needed
+      return;
+    }
+
     const records = this.getAllQueries();
-    
-    // Ensure parent directory exists
     const dir = dirname(this.dbPath);
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
-
-    // Write primary database file using fast writeFileSync
     writeFileSync(this.dbPath, JSON.stringify(records, null, 2), "utf-8");
   }
 
@@ -84,8 +150,8 @@ export class Database {
     this.cache.set(cleanQuery, current + count);
   }
 
-  getAllQueries(): DatabaseRecord[] {
-    const records: DatabaseRecord[] = [];
+  getAllQueries() {
+    const records = [];
     for (const [query, count] of this.cache.entries()) {
       const bucketsMap = this.timeBuckets.get(query);
       const buckets = bucketsMap
@@ -102,14 +168,14 @@ export class Database {
     const cleanQuery = query.toLowerCase().trim();
     if (!cleanQuery) return;
 
-    // Ensure parent directory of WAL exists
-    const walDir = dirname(this.walPath);
-    if (!existsSync(walDir)) {
-      mkdirSync(walDir, { recursive: true });
+    // Only write to WAL if we are NOT using PostgreSQL (Postgres has native WAL durability!)
+    if (!this.sql && this.walPath) {
+      const walDir = dirname(this.walPath);
+      if (!existsSync(walDir)) {
+        mkdirSync(walDir, { recursive: true });
+      }
+      appendFileSyncCustom(this.walPath, cleanQuery + "\n");
     }
-
-    // Append immediately to sequential disk log
-    appendFileSync(this.walPath, cleanQuery + "\n", "utf-8");
 
     // Buffer count in memory
     const current = this.writeBuffer.get(cleanQuery) || 0;
@@ -132,16 +198,25 @@ export class Database {
     }
   }
 
+  private totalSearchesSubmitted = 0;
+  private flushesCount = 0;
+
   async flush(onFlushCallback?: (query: string, count: number) => void): Promise<void> {
     if (this.writeBuffer.size === 0) {
-      // Truncate WAL anyway to remain consistent
-      if (existsSync(this.walPath)) {
-        writeFileSync(this.walPath, "", "utf-8");
-      }
       return;
     }
 
-    // 1. Merge buffer counts into database cache
+    if (this.sql) {
+      try {
+        await this.flushToPostgres();
+      } catch (err) {
+        console.error("[Database] Failed to flush batch to PostgreSQL:", err);
+        // Retain buffer on error so we can retry on next interval
+        return;
+      }
+    }
+
+    // Merge buffer counts into database cache
     for (const [query, count] of this.writeBuffer.entries()) {
       this.updateQueryCount(query, count);
       if (onFlushCallback) {
@@ -149,19 +224,75 @@ export class Database {
       }
     }
 
-    // 2. Save database to disk
-    await this.save();
+    if (!this.sql) {
+      await this.save();
+      // Truncate file-based WAL log
+      if (this.walPath && existsSync(this.walPath)) {
+        writeFileSync(this.walPath, "", "utf-8");
+      }
+    }
 
-    // 3. Clear buffer and increment flush metrics
     this.writeBuffer.clear();
     this.flushesCount++;
+  }
 
-    // 4. Truncate WAL log to 0 bytes
-    writeFileSync(this.walPath, "", "utf-8");
+  private async flushToPostgres(): Promise<void> {
+    if (!this.sql || this.writeBuffer.size === 0) return;
+
+    // Use Postgres.js transactional multi-row UPSERTs
+    const queryRows = Array.from(this.writeBuffer.entries()).map(([query, count]) => ({
+      query,
+      count
+    }));
+
+    const currentBucketId = Math.floor(Date.now() / 60000);
+    const bucketRows: { query: string; bucket_id: number; count: number }[] = [];
+
+    for (const [query] of this.writeBuffer.entries()) {
+      const qBuckets = this.timeBuckets.get(query);
+      if (qBuckets) {
+        const countInCurrentBucket = qBuckets.get(currentBucketId) || 0;
+        if (countInCurrentBucket > 0) {
+          bucketRows.push({
+            query,
+            bucket_id: currentBucketId,
+            count: countInCurrentBucket
+          });
+        }
+      }
+    }
+
+    await this.sql.begin(async (sql) => {
+      // 1. Bulk Upsert search_queries
+      for (const row of queryRows) {
+        await sql`
+          INSERT INTO search_queries (query, count, updated_at)
+          VALUES (${row.query}, ${row.count}, NOW())
+          ON CONFLICT (query) DO UPDATE SET
+            count = search_queries.count + EXCLUDED.count,
+            updated_at = NOW()
+        `;
+      }
+
+      // 2. Bulk Upsert time_buckets
+      for (const row of bucketRows) {
+        await sql`
+          INSERT INTO time_buckets (query, bucket_id, count)
+          VALUES (${row.query}, ${row.bucket_id}, ${row.count})
+          ON CONFLICT (query, bucket_id) DO UPDATE SET
+            count = EXCLUDED.count
+        `;
+      }
+    });
   }
 
   async recover(onFlushCallback?: (query: string, count: number) => void): Promise<void> {
-    if (!existsSync(this.walPath)) return;
+    if (this.sql) {
+      // PostgreSQL handles crash recovery naturally through its native transactions/WAL
+      return;
+    }
+
+    if (!this.walPath || !existsSync(this.walPath)) return;
 
     const content = readFileSync(this.walPath, "utf-8");
     const lines = content.split("\n");
@@ -174,7 +305,6 @@ export class Database {
         const current = recoveryBuffer.get(cleanLine) || 0;
         recoveryBuffer.set(cleanLine, current + 1);
 
-        // Populate recovery time buckets
         let queryBuckets = this.timeBuckets.get(cleanLine);
         if (!queryBuckets) {
           queryBuckets = new Map<number, number>();
@@ -186,23 +316,18 @@ export class Database {
     }
 
     if (recoveryBuffer.size > 0) {
-      // Replay all events
       for (const [query, increment] of recoveryBuffer.entries()) {
         this.updateQueryCount(query, increment);
         if (onFlushCallback) {
           onFlushCallback(query, this.getQueryCount(query));
         }
       }
-      // Save updated database
       await this.save();
       this.flushesCount++;
     }
 
-    // Truncate the recovered log
     writeFileSync(this.walPath, "", "utf-8");
   }
-
-  // --- Recency-Aware Trending Scores ---
 
   getDecayScore(query: string, currentBucketId: number): number {
     const cleanQuery = query.toLowerCase().trim();
@@ -219,9 +344,10 @@ export class Database {
   }
 
   getWalSize(): number {
-    if (!existsSync(this.walPath)) return 0;
+    if (this.sql) return 0; // Native Postgres WAL
+    if (!this.walPath || !existsSync(this.walPath)) return 0;
     try {
-      return statSync(this.walPath).size;
+      return statSyncCustom(this.walPath);
     } catch {
       return 0;
     }
@@ -236,6 +362,23 @@ export class Database {
       writeSavings: Math.max(0, this.totalSearchesSubmitted - this.flushesCount)
     };
   }
+
+  async close(): Promise<void> {
+    if (this.sql) {
+      await this.sql.end();
+    }
+  }
+}
+
+// Custom fast FS append helper
+function appendFileSyncCustom(path: string, content: string): void {
+  const fs = require("fs");
+  fs.appendFileSync(path, content, "utf-8");
+}
+
+function statSyncCustom(path: string): number {
+  const fs = require("fs");
+  return fs.statSync(path).size;
 }
 
 export default Database;

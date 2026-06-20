@@ -65,8 +65,29 @@ if (flushInterval.unref) {
   flushInterval.unref();
 }
 
+// Graceful shutdown handling for distributed environment
+const handleShutdown = async () => {
+  console.log("\n[Server] Shutting down gracefully...");
+  clearInterval(flushInterval);
+  try {
+    await db.flush((query, count) => {
+      trie.insert(query, count);
+    });
+    await cache.closeAll();
+    await db.close();
+    console.log("[Server] Shutdown complete.");
+    process.exit(0);
+  } catch (err) {
+    console.error("[Server] Error during graceful shutdown:", err);
+    process.exit(1);
+  }
+};
+
+process.on("SIGINT", handleShutdown);
+process.on("SIGTERM", handleShutdown);
+
 export const app = new Elysia()
-  .get("/suggest", ({ query, set }) => {
+  .get("/suggest", async ({ query, set }) => {
     const startTime = performance.now();
     const q = (query.q || "").trim();
 
@@ -88,7 +109,7 @@ export const app = new Elysia()
     if (assignedNodeId) {
       cacheNode = cache.getNode(assignedNodeId);
       if (cacheNode) {
-        cachedValue = cacheNode.get(normalized);
+        cachedValue = await cacheNode.get(normalized);
       }
     }
 
@@ -121,7 +142,7 @@ export const app = new Elysia()
         metricsMisses++;
         if (cacheNode && assignedNodeId) {
           // Cache suggestions with a 30-second passive TTL
-          cacheNode.set(normalized, result, 30000);
+          await cacheNode.set(normalized, result, 30000);
         }
       }
     }
@@ -132,7 +153,7 @@ export const app = new Elysia()
 
     return result;
   })
-  .get("/cache/debug", ({ query }) => {
+  .get("/cache/debug", async ({ query }) => {
     const prefix = (query.prefix || "").trim().toLowerCase();
     const hash = fnv1a(prefix);
     const assignedNode = hashRing.getNode(prefix);
@@ -141,8 +162,11 @@ export const app = new Elysia()
     let cacheStatus = "miss";
     if (assignedNode) {
       const cacheNode = cache.getNode(assignedNode);
-      if (cacheNode && cacheNode.get(prefix)) {
-        cacheStatus = "hit";
+      if (cacheNode) {
+        const isCached = await cacheNode.get(prefix);
+        if (isCached) {
+          cacheStatus = "hit";
+        }
       }
     }
 
@@ -181,3 +205,4 @@ export const app = new Elysia()
     }
     return { message: "Searched" };
   });
+export default app;

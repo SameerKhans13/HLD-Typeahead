@@ -2,11 +2,15 @@
   "name": "typeahead",
   "version": "1.0.50",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "bun run --watch src/index.ts"
+    "test": "bun test",
+    "dev": "bun run --watch src/index.ts",
+    "seed": "bun run scripts/seed.ts",
+    "seed-original": "bun run scripts/seed-original.ts"
   },
   "dependencies": {
-    "elysia": "latest"
+    "elysia": "latest",
+    "ioredis": "^5.11.1",
+    "postgres": "^3.4.9"
   },
   "devDependencies": {
     "@elysiajs/eden": "^1.4.9",
