@@ -1,4 +1,4 @@
-import { expect, test, describe, beforeAll, afterEach } from "bun:test";
+import { expect, test, describe, beforeAll, afterEach, afterAll } from "bun:test";
 import { treaty } from "@elysiajs/eden";
 import { app, trie, cache, db } from "../src/server";
 import { TrieNode } from "../src/trie";
@@ -225,5 +225,10 @@ describe("Elysia API Server - Recency-Aware Trending Ranking", () => {
     expect(resRecency.status).toBe(200);
     const dataRecency = resRecency.data as any[];
     expect(dataRecency[0].query).toBe("ap_spike_apricot");
+  });
+
+  afterAll(async () => {
+    await db.close();
+    await cache.closeAll();
   });
 });

@@ -721,9 +721,9 @@
     }
 
     @keyframes beaconPulse {
-      0% { r: 6; opacity: 1; filter: drop-shadow(0 0 2px #fff); }
-      50% { r: 10; opacity: 0.6; filter: drop-shadow(0 0 10px rgba(6, 182, 212, 0.8)); }     
-      100% { r: 6; opacity: 1; filter: drop-shadow(0 0 2px #fff); }
+      0% { r: 5.5; opacity: 1; stroke-width: 1.5; }
+      50% { r: 9.5; opacity: 0.5; stroke-width: 3.5; }     
+      100% { r: 5.5; opacity: 1; stroke-width: 1.5; }
     }
 
     .ring-legends {
@@ -767,6 +767,42 @@
       font-weight: 700;
       color: var(--secondary);
     }
+
+    /* --- ADVANCED VISUALIZER ANIMATIONS & STYLES --- */
+    .routing-path {
+      stroke-dasharray: 600;
+      stroke-dashoffset: 600;
+      animation: drawArc 0.6s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+    }
+    
+    @keyframes drawArc {
+      to {
+        stroke-dashoffset: 0;
+      }
+    }
+
+    .vnode-dot {
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .vnode-dot:hover {
+      r: 7 !important;
+      stroke-width: 1.5 !important;
+      stroke: #ffffff !important;
+    }
+
+    .visual-node {
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .visual-node:hover {
+      transform: scale(1.15) translateY(-2px);
+      box-shadow: 0 6px 15px rgba(99, 102, 241, 0.35);
+      border-color: var(--secondary);
+    }
+
+
   </style>
 </head>
 <body>
@@ -792,22 +828,33 @@
         </div>
 
         <!-- Search Form (with submit throttling) -->
-        <div class="search-wrapper">
-          <form id="search-form" class="search-input-container">
-            <svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>   
+        <div class="search-wrapper" style="width: 100%; position: relative;">
+          <form id="search-form" class="search-input-container" style="position: relative; display: flex; align-items: center; gap: 0.75rem;">
+            <svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="position: absolute; left: 1.25rem; color: var(--text-muted); pointer-events: none; transition: color 0.3s ease; z-index: 5;"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
             <input
               type="text"
               class="search-input"
               id="autocomplete-input"
-              placeholder="Type to query Trie... (e.g. 'cat', 'car', 'blue')"
+              placeholder="Type to query Trie... (e.g. 'family guy', 'emma watson')"
               autocomplete="off"
               spellcheck="false"
+              style="width: 100%; background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); padding: 1.1rem 1.5rem 1.1rem 3.25rem; border-radius: 16px; color: var(--text-primary); font-family: var(--font-sans); font-size: 1.1rem; font-weight: 500; outline: none; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);"
             />
             <button type="submit" class="search-submit-btn" id="search-submit-btn">Search</button>
-
-            <!-- Live Dynamic Suggestions Dropdown -->
-            <div class="suggestions-container" id="suggestions-box"></div>
           </form>
+          <!-- Live Dynamic Suggestions Dropdown — MUST be outside <form> flex container -->
+          <div class="suggestions-container" id="suggestions-box"></div>
+        </div>
+
+        <!-- Curated Trending Searches (Real AOL queries) -->
+        <div class="trending-container" style="margin-top: 1rem; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.65rem; flex-wrap: wrap;">
+          <span class="trending-title" style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap;">Trending Now:</span>
+          <div class="trending-pills" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <button class="trending-pill" data-query="family guy" style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); color: var(--text-secondary); padding: 0.35rem 0.85rem; border-radius: 100px; font-family: var(--font-sans); font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: all 0.2s;">family guy</button>
+            <button class="trending-pill" data-query="emma watson" style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); color: var(--text-secondary); padding: 0.35rem 0.85rem; border-radius: 100px; font-family: var(--font-sans); font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: all 0.2s;">emma watson</button>
+            <button class="trending-pill" data-query="allegory of the cave" style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); color: var(--text-secondary); padding: 0.35rem 0.85rem; border-radius: 100px; font-family: var(--font-sans); font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: all 0.2s;">allegory of the cave</button>
+            <button class="trending-pill" data-query="citation machine" style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); color: var(--text-secondary); padding: 0.35rem 0.85rem; border-radius: 100px; font-family: var(--font-sans); font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: all 0.2s;">citation machine</button>
+          </div>
         </div>
 
         <div class="control-cards-container">
@@ -828,6 +875,21 @@
                   step="50"
                   value="150"
                 />
+              </div>
+
+              <!-- Ranking Algorithm Toggle Row -->
+              <div class="control-row" style="margin-top: 0.25rem; margin-bottom: 0.25rem; flex-direction: column; align-items: flex-start; gap: 0.4rem; border-bottom: none;">
+                <div class="control-header" style="width: 100%;">
+                  <span class="control-label" style="font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted);">Ranking Algorithm</span>
+                </div>
+                <div class="ranking-options" style="display: flex; gap: 0.5rem; width: 100%;">
+                  <button type="button" class="ranking-btn active" id="ranking-basic-btn" style="flex: 1; padding: 0.5rem; background: rgba(99, 102, 241, 0.15); border: 1px solid var(--primary); border-radius: 8px; font-size: 0.75rem; color: var(--text-primary); cursor: pointer; transition: all 0.2s; font-family: var(--font-sans); font-weight: 600;">
+                    Frequency
+                  </button>
+                  <button type="button" class="ranking-btn" id="ranking-recency-btn" style="flex: 1; padding: 0.6rem; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; font-size: 0.8rem; color: var(--text-secondary); cursor: pointer; transition: all 0.2s; font-family: var(--font-sans); font-weight: 600;">
+                    Recency (Decay)
+                  </button>
+                </div>
               </div>
 
               <div class="control-row" style="gap: 0.35rem;">
@@ -892,6 +954,8 @@
             <span class="metric-value" id="metric-results">0 / 10 max</span>
           </div>
         </div>
+
+
       </div>
 
       <!-- Right Column: Visualizers & Logs -->
@@ -1021,11 +1085,16 @@
     const metricDepth = document.getElementById('metric-depth');
     const metricResults = document.getElementById('metric-results');
 
+    // Ranking algorithm togglers
+    const rankingBasicBtn = document.getElementById('ranking-basic-btn');
+    const rankingRecencyBtn = document.getElementById('ranking-recency-btn');
+
     // State Variables
     let currentSuggestions = [];
     let selectedIndex = -1;
     let keystrokeCount = 0;
     let requestCount = 0;
+    let activeRankingMode = 'basic'; // 'basic' | 'recency'
 
     // Node Color Palette Maps
     const nodeColors = {
@@ -1151,10 +1220,10 @@
       updateEfficiency();
 
       const startTime = performance.now();
-      addLog('API', `Dispatched prefix lookup: "${trimmed}"`);
+      addLog('API', `Dispatched prefix lookup: "${trimmed}" (${activeRankingMode} ranking)`);
 
       try {
-        const response = await fetch(`/suggest?q=${encodeURIComponent(trimmed)}`);
+        const response = await fetch(`/suggest?q=${encodeURIComponent(trimmed)}&ranking=${activeRankingMode}`);
         const data = await response.json();
         const endTime = performance.now();
         const latency = (endTime - startTime).toFixed(2);
@@ -1206,6 +1275,8 @@
           rightPart = cleanQuery.slice(query.length);
         }
 
+        const scoreSuffix = activeRankingMode === 'recency' ? ' score' : ' queries';
+
         return `
           <div class="suggestion-item" data-index="${idx}">
             <div class="suggestion-left">
@@ -1215,7 +1286,7 @@
               </span>
             </div>
             <div class="suggestion-right">
-              <span class="count-badge">${comp.count.toLocaleString()} queries</span>        
+              <span class="count-badge">${comp.count.toLocaleString()}${scoreSuffix}</span>
             </div>
           </div>
         `;
@@ -1251,7 +1322,7 @@
       metricResults.innerText = '0 / 10 max';
     }
 
-    // Dynamic Visualizer logic
+    // Dynamic Visualizer logic with Prefix Explorer Walk
     function visualizeTriePath(term, isFocusedCompletions = false, isTerminal = false) {     
       visualizerPlaceholder.style.display = 'none';
 
@@ -1261,7 +1332,7 @@
       let html = '<div class="node-chain">';
 
       // Root Node
-      html += `<div class="visual-node root-node" title="Root Node">Ø</div>`;
+      html += `<div class="visual-node root-node" title="Click to reset root" onclick="explorePrefix('')">Ø</div>`;
 
       // Build chain
       chars.forEach((char, idx) => {
@@ -1272,16 +1343,25 @@
           nodeClass = 'visual-node terminal';
         }
 
-        html += `<div class="${nodeClass}">${char}</div>`;
+        const subPrefix = clean.slice(0, idx + 1);
+        html += `<div class="${nodeClass}" title="Jump to prefix: '${subPrefix}'" onclick="explorePrefix('${subPrefix}')">${char}</div>`;
       });
 
       html += '</div>';
 
       const prefixContext = isFocusedCompletions ? 'Focused completion' : (isTerminal ? 'Selected leaf terminal' : 'Prefix path matched');
-      html += `<div class="completion-detail">${prefixContext} &bull; Depth: ${chars.length}</div>`;
+      html += `<div class="completion-detail">${prefixContext} &bull; Depth: ${chars.length} &bull; <span style="color: var(--secondary)">Click nodes to walk the path!</span></div>`;
 
       visualizerDisplay.innerHTML = html;
     }
+
+    // Global explorer hook
+    window.explorePrefix = function(subPrefix) {
+      input.value = subPrefix;
+      input.focus();
+      input.dispatchEvent(new Event('input'));
+      addLog('System', `Walking Prefix Tree Explorer to path node: "${subPrefix}"`);
+    };
 
     // Reset visualizer
     function resetVisualizer() {
@@ -1305,7 +1385,7 @@
           const x = cx + r * Math.cos(angle);
           const y = cy + r * Math.sin(angle);
           const color = nodeColors[v.node] || '#ffffff';
-          nodeHtml += `<circle cx="${x}" cy="${y}" r="3.5" fill="${color}" stroke="#070913" stroke-width="0.5" title="${v.label} @ ${v.coordinate}" />`;
+          nodeHtml += `<circle class="vnode-dot" data-node="${v.node}" cx="${x}" cy="${y}" r="3.5" fill="${color}" stroke="#070913" stroke-width="0.5" title="${v.label} @ ${v.coordinate}" />`;
         });
         ringVnodesGroup.innerHTML = nodeHtml;
       }
@@ -1352,8 +1432,8 @@
         const largeArcFlag = (endAngle - startAngle) > Math.PI ? 1 : 0;
 
         routeHtml += `
-          <!-- Clockwise Glowing Routing Arc -->
-          <path d="M ${qx} ${qy} A ${r} ${r} 0 ${largeArcFlag} 1 ${tx} ${ty}" fill="none" stroke="${targetColor}" stroke-width="4.5" stroke-linecap="round" opacity="0.8" style="filter: drop-shadow(0 0 6px ${targetColor});" />
+          <!-- Clockwise Animated Routing Arc -->
+          <path class="routing-path" d="M ${qx} ${qy} A ${r} ${r} 0 ${largeArcFlag} 1 ${tx} ${ty}" fill="none" stroke="${targetColor}" stroke-width="4.5" stroke-linecap="round" opacity="0.8" style="filter: drop-shadow(0 0 6px ${targetColor});" />
 
           <!-- Line to Query Hash -->
           <line x1="${cx}" y1="${cy}" x2="${qx}" y2="${qy}" stroke="rgba(255,255,255,0.15)" stroke-dasharray="3,3" stroke-width="1.5" />
@@ -1387,6 +1467,91 @@
       ringNodeVal.innerText = 'N/A';
       ringNodeVal.style.color = 'var(--text-secondary)';
     }
+
+
+    // Setup Ranking Algorithm Buttons Toggle (elements already retrieved above)
+
+    rankingBasicBtn.addEventListener('click', () => {
+      if (activeRankingMode === 'basic') return;
+      activeRankingMode = 'basic';
+      rankingBasicBtn.classList.add('active');
+      rankingRecencyBtn.classList.remove('active');
+      rankingBasicBtn.style.background = 'rgba(99, 102, 241, 0.15)';
+      rankingBasicBtn.style.borderColor = 'var(--primary)';
+      rankingBasicBtn.style.color = 'var(--text-primary)';
+      rankingRecencyBtn.style.background = 'rgba(255, 255, 255, 0.03)';
+      rankingRecencyBtn.style.borderColor = 'rgba(255, 255, 255, 0.05)';
+      rankingRecencyBtn.style.color = 'var(--text-secondary)';
+      addLog('System', 'Switched ranking mode to: Frequency (Cached)');
+      if (input.value.trim()) {
+        fetchSuggestions(input.value);
+      }
+    });
+
+    rankingRecencyBtn.addEventListener('click', () => {
+      if (activeRankingMode === 'recency') return;
+      activeRankingMode = 'recency';
+      rankingRecencyBtn.classList.add('active');
+      rankingBasicBtn.classList.remove('active');
+      rankingRecencyBtn.style.background = 'rgba(99, 102, 241, 0.15)';
+      rankingRecencyBtn.style.borderColor = 'var(--primary)';
+      rankingRecencyBtn.style.color = 'var(--text-primary)';
+      rankingBasicBtn.style.background = 'rgba(255, 255, 255, 0.03)';
+      rankingBasicBtn.style.borderColor = 'rgba(255, 255, 255, 0.05)';
+      rankingBasicBtn.style.color = 'var(--text-secondary)';
+      addLog('System', 'Switched ranking mode to: Recency-Aware (Decay)');
+      if (input.value.trim()) {
+        fetchSuggestions(input.value);
+      }
+    });
+
+    // Trending Now pill click listeners
+    document.querySelectorAll('.trending-pill').forEach(pill => {
+      pill.addEventListener('click', () => {
+        const query = pill.getAttribute('data-query');
+        input.value = query;
+        addLog('System', `Triggered trending search shortcut: "${query}"`);
+        
+        // Populate and search immediately
+        fetchSuggestions(query);
+        fetchHashRingRouting(query);
+        handleSearchSubmit(query);
+      });
+    });
+
+    // Setup interactive Consistent Hashing legends highlights
+    const legends = document.querySelectorAll('.legend-item');
+    legends.forEach((legend, idx) => {
+      const nodeId = `cache-node-${idx}`;
+      legend.style.cursor = 'pointer';
+      legend.style.padding = '0.2rem 0.5rem';
+      legend.style.borderRadius = '6px';
+      legend.style.transition = 'all 0.2s ease';
+      
+      legend.addEventListener('mouseenter', () => {
+        legend.style.background = 'rgba(255, 255, 255, 0.05)';
+        const dots = document.querySelectorAll('.vnode-dot');
+        dots.forEach(dot => {
+          if (dot.getAttribute('data-node') === nodeId) {
+            dot.setAttribute('r', '6');
+            dot.style.filter = `drop-shadow(0 0 6px ${nodeColors[nodeId]})`;
+          } else {
+            dot.style.opacity = '0.15';
+          }
+        });
+        addLog('System', `Highlighting virtual sharding coordinates for physical ${nodeId.replace('cache-', '')}`);
+      });
+      
+      legend.addEventListener('mouseleave', () => {
+        legend.style.background = 'transparent';
+        const dots = document.querySelectorAll('.vnode-dot');
+        dots.forEach(dot => {
+          dot.setAttribute('r', '3.5');
+          dot.style.filter = 'none';
+          dot.style.opacity = '1';
+        });
+      });
+    });
 
     // Throttle Search Submission logic
     const handleSearchSubmit = throttle(async (query) => {
