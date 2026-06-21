@@ -43,9 +43,11 @@ console.log("Populating Trie...");
 const start = performance.now();
 let count = 0;
 for (const record of db.getAllQueries()) {
-  trie.insert(record.query, record.count);
+  trie.insert(record.query, record.count, false);
   count++;
 }
+console.log("Post-processing Trie completions...");
+trie.updateAllCompletions();
 const end = performance.now();
 console.log(`Trie populated with ${count} queries in ${(end - start).toFixed(2)}ms.`);       
 

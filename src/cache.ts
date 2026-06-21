@@ -18,6 +18,11 @@ export class CacheNode {
         maxRetriesPerRequest: 1,
         lazyConnect: true
       });
+      // Prevent unhandled "error" events from crashing the process
+      this.redis.on("error", (err) => {
+        console.error(`[CacheNode] Redis error on node ${id}:`, err.message);
+        // Falls back to in-memory cache on all operations
+      });
       // Handle connection errors gracefully without crashing the app
       this.redis.connect().catch((err) => {
         console.error(`[CacheNode] Redis connection failed for node ${id}:`, err);

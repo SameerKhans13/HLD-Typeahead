@@ -23,7 +23,7 @@ export class Trie {
     this.root = new TrieNode();
   }
 
-  insert(query: string, count: number): void {
+  insert(query: string, count: number, updateCompletions: boolean = true): void {
     const cleanQuery = query.toLowerCase().trim();
     if (!cleanQuery) return;
 
@@ -41,6 +41,8 @@ export class Trie {
     current.isWord = true;
     current.count = count;
     current.queryStr = cleanQuery;
+
+    if (!updateCompletions) return;
 
     // Traverse the path backwards from terminal node to root to update topCompletions
     for (let i = path.length - 1; i >= 0; i--) {
@@ -73,6 +75,36 @@ export class Trie {
     }
   }
 
+  updateAllCompletions(): void {
+    const dfs = (node: TrieNode): void => {
+      const completionMap = new Map<string, number>();
+
+      if (node.isWord && node.queryStr) {
+        completionMap.set(node.queryStr, node.count);
+      }
+
+      for (const childChar in node.children) {
+        const childNode = node.children[childChar];
+        dfs(childNode);
+        for (const completion of childNode.topCompletions) {
+          completionMap.set(completion.query, completion.count);
+        }
+      }
+
+      node.topCompletions = Array.from(completionMap.entries())
+        .map(([q, c]) => ({ query: q, count: c }))
+        .sort((a, b) => {
+          if (b.count !== a.count) {
+            return b.count - a.count;
+          }
+          return a.query.localeCompare(b.query);
+        })
+        .slice(0, 10);
+    };
+
+    dfs(this.root);
+  }
+
   getSuggestions(prefix: string): AutocompleteCompletion[] {
     const cleanPrefix = prefix.toLowerCase().trim();
     if (!cleanPrefix) return [];
@@ -87,7 +119,7 @@ export class Trie {
     return current.topCompletions;
   }
 
-  getAllCompletions(prefix: string): AutocompleteCompletion[] {
+  getAllCompletions(prefix: string, maxCompletions: number = 300): AutocompleteCompletion[] {
     const cleanPrefix = prefix.toLowerCase().trim();
     if (!cleanPrefix) return [];
 
@@ -101,6 +133,7 @@ export class Trie {
 
     const results: AutocompleteCompletion[] = [];
     const collect = (node: TrieNode) => {
+      if (results.length >= maxCompletions) return;
       if (node.isWord && node.queryStr) {
         results.push({ query: node.queryStr, count: node.count });
       }

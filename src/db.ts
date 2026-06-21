@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, statSync } from "fs";
 import { dirname } from "path";
 import postgres from "postgres";
 import { calculateDecayScore } from "./decay";
@@ -12,6 +12,10 @@ export class Database {
   private cache: Map<string, number> = new Map();
   private timeBuckets: Map<string, Map<number, number>> = new Map();
   private writeBuffer: Map<string, number> = new Map();
+
+  // Analytics counters — declared early so all methods see them initialized
+  private totalSearchesSubmitted = 0;
+  private flushesCount = 0;
 
   // PostgreSQL client
   private sql?: postgres.Sql;
@@ -42,6 +46,36 @@ export class Database {
       try {
         await this.initializePostgresTables();
         await this.loadFromPostgres();
+
+        // SELF-HEALING AUTOMATIC SEEDING ON BOOT:
+        // If Postgres is connected but completely empty, automatically seed it from dataset.json if present!
+        if (this.cache.size === 0 && this.datasetPath && existsSync(this.datasetPath)) {
+          console.log(`[Database] PostgreSQL is connected but empty. Automatically seeding from ${this.datasetPath}...`);
+          this.loadFromFile(this.datasetPath); // Loads into this.cache memory
+          
+          // Bulk insert the loaded queries into PostgreSQL in the background
+          const records = this.getAllQueries();
+          const batchSize = 5000;
+          console.log(`[Database] Bulk inserting ${records.length} queries into PostgreSQL (batch size: ${batchSize})...`);
+          
+          for (let i = 0; i < records.length; i += batchSize) {
+            const batch = records.slice(i, i + batchSize);
+            const rows = batch.map(item => ({
+              query: item.query,
+              count: item.count,
+              updated_at: new Date()
+            }));
+            
+            await this.sql`
+              INSERT INTO search_queries (query, count, updated_at)
+              VALUES ${this.sql(rows, 'query', 'count', 'updated_at')}
+              ON CONFLICT (query) DO UPDATE SET
+                count = EXCLUDED.count,
+                updated_at = NOW()
+            `;
+          }
+          console.log(`[Database] PostgreSQL automatic seeding complete!`);
+        }
       } catch (err) {
         console.error("[Database] Failed to load data from PostgreSQL. Falling back to local file...", err);
         await this.loadFromFileSystem();
@@ -198,8 +232,7 @@ export class Database {
     }
   }
 
-  private totalSearchesSubmitted = 0;
-  private flushesCount = 0;
+
 
   async flush(onFlushCallback?: (query: string, count: number) => void): Promise<void> {
     if (this.writeBuffer.size === 0) {
@@ -274,13 +307,13 @@ export class Database {
         `;
       }
 
-      // 2. Bulk Upsert time_buckets
+      // 2. Bulk Upsert time_buckets (accumulate counts, not overwrite)
       for (const row of bucketRows) {
         await sql`
           INSERT INTO time_buckets (query, bucket_id, count)
           VALUES (${row.query}, ${row.bucket_id}, ${row.count})
           ON CONFLICT (query, bucket_id) DO UPDATE SET
-            count = EXCLUDED.count
+            count = time_buckets.count + EXCLUDED.count
         `;
       }
     });
@@ -372,13 +405,11 @@ export class Database {
 
 // Custom fast FS append helper
 function appendFileSyncCustom(path: string, content: string): void {
-  const fs = require("fs");
-  fs.appendFileSync(path, content, "utf-8");
+  appendFileSync(path, content, "utf-8");
 }
 
 function statSyncCustom(path: string): number {
-  const fs = require("fs");
-  return fs.statSync(path).size;
+  return statSync(path).size;
 }
 
 export default Database;
