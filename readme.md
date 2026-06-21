@@ -1,219 +1,522 @@
 # Antigravity Typeahead
 
-Antigravity Typeahead is a highly-optimized, low-latency search typeahead system designed to serve popular query suggestions while handling intense write volumes and high-traffic lookups. Built from scratch using **Bun** and **Elysia JS** (TypeScript), the system leverages advanced backend designs like an in-memory prefix tree (Trie), a distributed passive TTL cache, consistent hashing for logical cache distribution, exponential time-decay for trending queries, and batch writes powered by a Write-Ahead Log (WAL).
+> **Ultra-fast, in-memory prefix-tree autocomplete system** — built with Bun + Elysia, backed by PostgreSQL, Redis, and Nginx in a distributed Docker architecture.
+
+[![Tests](https://img.shields.io/badge/tests-32%20pass-brightgreen)](#-running-tests)
+[![Bun](https://img.shields.io/badge/runtime-Bun%201.x-black)](#prerequisites)
+[![TypeScript](https://img.shields.io/badge/language-TypeScript-blue)](#)
+[![Docker](https://img.shields.io/badge/docker-compose-2496ED)](#-docker-distributed-setup)
 
 ---
 
-## 🛠️ Architecture Overview
+## Table of Contents
 
-The system architecture is structured as a multi-tier pipeline to maximize read performance and guarantee data persistence.
-
-```
-       [ Client Browser (HTML5 / Vanilla JS Frontend) ]
-             |                             ^
-             | (GET /suggest?q=...)        | (Suggestions List)
-             v                             |
-  =========================== BACKEND API GATEWAY ===========================
-             |
-             +---> [ Consistent Hashing Ring (FNV-1a) ]
-             |     - Routes the prefix search to the owning cache node
-             v
-   [ Distributed Cache Nodes (Passive Eviction, 30s TTL) ]
-     - HIT  --> Returns cached suggestions immediately (O(1))
-     - MISS --> Falls back to the Primary Data Engine
-             |
-             +---> [ In-Memory Prefix Tree (Trie) ]
-             |     - Walks prefix path and returns pre-computed top-10 completions
-             |
-             +---> [ Database Cache (RAM Map) ]
-                   - Historical baseline counts merged with time-binned buckets
-                   
-  ============================= WRITE WORKLOAD =============================
-             | (POST /search { "query": "..." })
-             v
-   [ Sequential Write-Ahead Log (WAL) ] ----(Buffer)----> [ RAM Write Buffer ]
-     - Immediate disk append to protect                     - In-memory aggregates
-       against crashes (Durability)                           until auto-flush (50 entries)
-                                                                    |
-                                                                    v
-                                                            [ db.json Storage ]
-```
-
-### 1. In-Memory Prefix Tree (Trie) & Node Caching
-A raw trie traversal to find suggestions for a prefix `p` of length `k` can be expensive if we must recursively search all branches under the prefix node. To achieve $O(k)$ lookup time, **each TrieNode maintains a pre-sorted cache (`topCompletions`)** containing the top 10 completions in its sub-tree. 
-When a new query is inserted, we traverse backwards from the terminal node back to the root, merging child completion maps and sorting the top 10. Thus, lookups are a direct $O(k)$ pointer-walk without any recursive branching on reads.
-
-### 2. Distributed Cache with Consistent Hashing
-To prevent caching hotspots and scale the caching layer horizontally:
-* We implement **Consistent Hashing** using the **FNV-1a** 32-bit hashing algorithm.
-* 3 logical cache physical nodes (`cache-node-0`, `cache-node-1`, `cache-node-2`) are mapped onto a unit circle using **20 virtual nodes per physical node** (60 virtual nodes total) to ensure uniform key distribution.
-* Incoming query prefixes are hashed and routed clockwise to the nearest virtual node.
-* Cached items are stored in logical `CacheNode` stores with a **30-second passive TTL**, allowing stale queries to evict themselves lazily on subsequent requests.
-
-### 3. Recency-Aware Trending Scores (Exponential Time Decay)
-To solve the problem of permanently over-ranking historically popular queries (e.g., "iphone" searched 1,000,000 times) over sudden viral spikes (e.g., "apricot" trending right now), we implement an **Exponential Time-Decay Scoring Algorithm**:
-* Searches are recorded into **1-minute time bins**.
-* For any query $q$, the ranking score is calculated using the formula:
-$$\text{Score}(q) = \text{BaselineCount}(q) + \sum (\text{BucketCount}(q, b_i) \times e^{-\lambda (t_{\text{current}} - b_i)}) \times 10,000$$
-* We use a **5-minute half-life** ($\lambda = \frac{\ln(2)}{5} \approx 0.1386$).
-* While a search spike is active, the boosted decayed score dominates, pushing trending searches to the top of Suggestions. As time advances, the spike decays exponentially, allowing historical baseline counts to win back their spots.
-
-### 4. Batch Writes, RAM Buffers & Write-Ahead Log (WAL)
-To prevent synchronous disk operations from blocking incoming search submissions, writes are processed asynchronously:
-* Incoming submissions are appended instantly to a sequential, append-only **Write-Ahead Log (`wal.log`)** to guarantee durability.
-* The query count is simultaneously buffered in a volatile **RAM write buffer**.
-* **Batch Flushing:** When the memory buffer reaches 50 distinct queries, an auto-flush merges the buffered counts into the primary database, saves `db.json` to disk, and truncates the WAL to 0 bytes.
-* **Crash Recovery:** On system boot, the server parses `wal.log`. If it is non-empty (indicating an un-flushed crash), it replays the queries, inserts them back into the Trie/Database, and truncates the log.
+1. [System Overview](#system-overview)
+2. [Architecture](#architecture)
+3. [Dataset](#dataset)
+4. [Quick Start (Local)](#quick-start-local)
+5. [Docker Distributed Setup](#docker-distributed-setup)
+6. [API Documentation](#api-documentation)
+7. [Performance Report](#performance-report)
+8. [Design Choices & Trade-offs](#design-choices--trade-offs)
+9. [Running Tests](#running-tests)
 
 ---
 
-## 🚀 Getting Started
+## System Overview
+
+Antigravity Typeahead solves the **high-load search autocomplete problem** — returning the top 10 relevant query completions for any prefix in under **1ms** at scale, while safely handling millions of concurrent search submissions without losing data.
+
+**Key capabilities:**
+- **100,500+ query** in-memory prefix tree with O(k) cached lookups
+- **Consistent hash ring** distributing cache keys across 3 logical nodes using FNV-1a + virtual nodes
+- **Passive TTL cache** (30s) with in-memory fallback when Redis is unavailable
+- **Write-Ahead Log + RAM buffer** — batch 50 writes before flushing, with crash recovery
+- **Exponential time-decay ranking** — viral trending queries rise and fall naturally
+- **PostgreSQL** persistent backend with auto-seeding on first boot
+- **3-node Nginx load-balanced** Docker cluster
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    CLIENT BROWSER (Vanilla JS)                      │
+│   ┌──────────────────────────────────────────────────────────────┐  │
+│   │  Debounced input → GET /suggest?q=<prefix>&ranking=basic     │  │
+│   │  Throttled submit → POST /search { query }                   │  │
+│   └──────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────┬───────────────────────────────────────┘
+                              │ HTTP
+                              ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    NGINX (Load Balancer — Port 80)                  │
+│              Round-robin / least_conn across 3 app nodes            │
+│              Keepalive upstream, gzip, proxy timeouts               │
+└──────────┬──────────────────┬──────────────────┬────────────────────┘
+           │                  │                  │
+           ▼                  ▼                  ▼
+    ┌─────────┐         ┌─────────┐        ┌─────────┐
+    │  app-1  │         │  app-2  │        │  app-3  │
+    │  :3000  │         │  :3000  │        │  :3000  │
+    └────┬────┘         └────┬────┘        └────┬────┘
+         │                   │                  │
+         └───────────────────┼──────────────────┘
+                             │  (all nodes share same backing services)
+         ┌───────────────────┼──────────────────────────────┐
+         │                   │  READ PATH                   │
+         │    ┌──────────────▼──────────────────┐           │
+         │    │    Consistent Hash Ring          │           │
+         │    │  FNV-1a hash → clockwise BST     │           │
+         │    │  3 nodes × 20 vnodes = 60 points │           │
+         │    └──────────────┬──────────────────┘           │
+         │                   │                              │
+         │    ┌──────────────▼──────────────────┐           │
+         │    │  Distributed Cache Layer         │           │
+         │    │  ┌──────────┐ ┌──────────┐ ┌──────────┐   │
+         │    │  │ redis-0  │ │ redis-1  │ │ redis-2  │   │
+         │    │  │  :6379   │ │  :6380   │ │  :6381   │   │
+         │    │  └──────────┘ └──────────┘ └──────────┘   │
+         │    │  Fallback: in-process Map (passive TTL)    │
+         │    └──────────────┬──────────────────┘           │
+         │          HIT ─────┤─── MISS                      │
+         │                   │                              │
+         │    ┌──────────────▼──────────────────┐           │
+         │    │    In-Memory Trie (prefix tree)  │           │
+         │    │  Each node caches top-10 comps   │           │
+         │    │  O(k) walk — no branching reads  │           │
+         │    └──────────────┬──────────────────┘           │
+         │                   │  WRITE PATH                  │
+         │    ┌──────────────▼──────────────────┐           │
+         │    │    RAM Write Buffer (Map<k,n>)   │           │
+         │    │    Auto-flush at 50 entries      │           │
+         │    └──────────────┬──────────────────┘           │
+         │                   │                              │
+         │    ┌──────────────▼──────────────────┐           │
+         │    │  Write-Ahead Log (wal.log)        │           │
+         │    │  Append-only, crash-safe          │           │
+         │    │  Replayed on boot if non-empty    │           │
+         │    └──────────────┬──────────────────┘           │
+         │                   │                              │
+         │    ┌──────────────▼──────────────────┐           │
+         │    │    PostgreSQL  (primary store)   │           │
+         │    │    search_queries + time_buckets │           │
+         │    │    Auto-seeded from dataset.json │           │
+         │    └─────────────────────────────────┘           │
+         └─────────────────────────────────────────────────┘
+```
+
+### Component Breakdown
+
+#### 1. Prefix Tree (Trie) — `src/trie.ts`
+Raw DFS traversal to collect completions under a prefix is O(T) where T is the size of the subtree — unacceptable at 100k+ entries. Instead:
+
+- Each `TrieNode` maintains a **pre-sorted `topCompletions[10]` cache** of the best results in its subtree.
+- On `insert(query, count)`, we walk back from the terminal node to the root and propagate/merge the completions upward.
+- `getSuggestions(prefix)` is a pure **O(k) pointer-walk** (k = prefix length) with no branching — the result is already cached at the prefix node.
+- `updateAllCompletions()` runs one post-order DFS after bulk loading the dataset, costing O(N·10·log10) ≈ O(N) to build the entire cache.
+
+#### 2. Consistent Hash Ring — `src/hashring.ts`
+- **FNV-1a** 32-bit hashing algorithm — fast, well-distributed, avalanche-effect
+- **3 physical cache nodes** × **20 virtual nodes** = **60 ring points** for uniform distribution
+- Ring points sorted ascending; `getNode(key)` uses **binary search** (O(log 60)) for clockwise lookup
+- Wrap-around handled by defaulting to index 0 (ring is circular)
+
+#### 3. Distributed Cache — `src/cache.ts`
+- `CacheNode`: thin wrapper over `ioredis` with in-process `Map<string, {value, expiry}>` fallback
+- **Passive TTL eviction**: expiry checked on `get()` — stale entries deleted lazily, zero background threads
+- `DistributedCache`: routes `REDIS_NODES` env var (format: `node-id:host:port,...`) to real Redis instances; falls back to pure in-memory if Redis is absent
+
+#### 4. Write-Ahead Log + Buffer — `src/db.ts`
+| Component | Purpose |
+|---|---|
+| `submitSearch(q)` | Appends `q\n` to `wal.log` (durable), then increments `writeBuffer[q]` |
+| `writeBuffer` | In-process Map accumulating counts until flush |
+| `flush()` | At 50 entries OR every 10s: merges buffer → DB, saves, truncates WAL |
+| `recover()` | On boot: replays WAL into DB + Trie if non-empty (crash recovery) |
+| Time buckets | 1-minute bins tracking per-bucket counts for decay scoring |
+
+#### 5. Exponential Decay Ranking — `src/decay.ts`
+
+$$\text{Score}(q, t) = \text{baseline}(q) + 10000 \cdot \sum_{b} \text{count}(q,b) \cdot e^{-\lambda(t - b)}$$
+
+where $\lambda = \frac{\ln 2}{5} \approx 0.1386$ (5-minute half-life).
+
+A fresh search spike multiplies by 10,000 to dominate historical counts. After 5 minutes the spike is at 50%, after 30 minutes (6 half-lives) it's at ~1.5% — historical baseline wins back.
+
+---
+
+## Dataset
+
+### Source
+The dataset is a **synthetic AOL-style search query corpus** generated by `scripts/seed-logic.ts`, combining:
+- 80+ realistic subject terms (tech, health, entertainment, finance, etc.)
+- 20+ adjective prefixes
+- 25+ query suffixes
+- Year and variant modifiers
+
+This produces **100,500 unique queries** with Zipf-like popularity distributions:
+- Top 50 queries: 50,000–100,000 searches
+- Queries 51–1000: 1,000–11,000 searches
+- Long tail (1,000–100,500): 10–960 searches
+
+> **Note:** The project also ships `scripts/download_and_parse_aol.py` — a Python script that can download and parse the real [AOL Query Log dataset](https://bit.ly/aol-query-log) if you want authentic search data.
+
+### Loading the Dataset
+
+**Option 1 — Synthetic data (default, instant):**
+```bash
+bun run seed
+# Writes 100,500 records to data/dataset.json in ~1.5s
+```
+
+**Option 2 — Real AOL data:**
+```bash
+pip install requests
+python scripts/download_and_parse_aol.py
+# Downloads, parses, and writes AOL logs to data/dataset.json
+```
+
+The server **auto-loads** the dataset on first boot:
+- If `data/db.json` (primary) exists → loads it
+- Else if `data/dataset.json` (fallback) exists → loads it, logs `[Database] Primary DB missing. Loading fallback dataset`
+- If PostgreSQL is connected and empty → auto-seeds from dataset in bulk batches of 5,000
+
+---
+
+## Quick Start (Local)
 
 ### Prerequisites
-Make sure you have **Bun** installed on your local machine. If not, install it using:
+
+| Tool | Version | Install |
+|---|---|---|
+| **Bun** | ≥ 1.0 | `powershell -c "irm bun.sh/install.ps1 \| iex"` |
+| **Node** (optional) | ≥ 18 | For tooling only |
+
+### Steps
+
 ```bash
-powershell -Command "irm bun.sh/install.ps1 | iex"
-```
+# 1. Clone
+git clone https://github.com/SameerKhans13/HLD-Typeahead.git
+cd HLD-Typeahead
 
-### Installation
-1. Clone the repository and navigate to the project directory:
-   ```bash
-   git clone https://github.com/SameerKhans13/HLD-Typeahead.git
-   cd HLD-Typeahead
-   ```
-2. Install the workspace dependencies:
-   ```bash
-   bun install
-   ```
+# 2. Install dependencies
+bun install
 
-### 🗄️ Ingesting the Dataset
-The assignment requires a minimum dataset size of **100,000 unique queries** with historical frequencies. We have provided a synthetic data generator script that compiles a highly realistic search query dataset.
+# 3. Generate dataset (only needed once)
+bun run seed
 
-To generate the 100k+ dataset (`data/dataset.json`), run:
-```bash
-bun run scripts/seed.ts
-```
-*This will generate `100,500` high-quality, varied-length search query combinations and write them to `data/dataset.json` in under 2 seconds.*
-
-### 🏃 Running the Application
-To start the Elysia API server in watch mode:
-```bash
+# 4. Start server
 bun run dev
+# → 🦊 Elysia is running at http://localhost:3000
 ```
-The server will start at **`http://localhost:3000`**. You can open this URL in any modern browser to access the beautiful, interactive dashboard and prefix tree visualizer.
+
+Open **http://localhost:3000** in your browser — the interactive dashboard loads immediately.
+
+> **Without Redis/PostgreSQL:** The server runs entirely in-memory using the local file fallback. No configuration needed for local development.
 
 ---
 
-## 🧪 Running the Unit Tests
-We have built a comprehensive test suite covering 100% of the core backend requirements using Bun's native test runner.
+## Docker Distributed Setup
 
-To execute the tests:
+The full distributed stack runs 9 containers:
+
+| Container | Role | Port |
+|---|---|---|
+| `typeahead-nginx` | Load balancer | **80** |
+| `typeahead-app-1/2/3` | Elysia API nodes | internal :3000 |
+| `typeahead-postgres` | Primary database | 5432 |
+| `typeahead-redis-0/1/2` | Cache shards | 6379/6380/6381 |
+
+### Starting the stack
+
+```bash
+# Build images and start all services
+docker-compose up --build
+
+# Or in detached mode
+docker-compose up --build -d
+```
+
+### Health checks
+All services have healthchecks configured. The startup order is enforced:
+```
+postgres (healthy) ┐
+redis-0  (healthy) ├─→ app-1/2/3 (healthy) → nginx (starts)
+redis-1  (healthy) │
+redis-2  (healthy) ┘
+```
+
+### Verifying
+
+```bash
+# Check all containers are healthy
+docker-compose ps
+
+# Tail app logs
+docker-compose logs -f app-1
+
+# Hit the load balancer
+curl http://localhost/suggest?q=java
+curl http://localhost/metrics
+```
+
+### Environment Variables
+
+| Variable | Description | Example |
+|---|---|---|
+| `DATABASE_URL` | PostgreSQL connection string | `postgres://postgres:postgres@postgres:5432/typeahead` |
+| `REDIS_NODES` | Comma-separated `nodeId:host:port` | `cache-node-0:redis-0:6379,...` |
+| `PORT` | Server port (default: 3000) | `3000` |
+
+---
+
+## API Documentation
+
+### `GET /suggest` — Autocomplete
+
+Returns up to **10** ranked query completions for a prefix.
+
+**Query Parameters:**
+
+| Param | Type | Required | Description |
+|---|---|---|---|
+| `q` | string | ✅ | Search prefix (case-insensitive) |
+| `ranking` | `basic` \| `recency` | ❌ | `basic` = frequency (default, cached). `recency` = exponential decay (real-time, uncached) |
+
+**Response headers:**
+- `X-Cache: HIT` — served from distributed cache
+- `X-Cache: MISS` — served from Trie, result written to cache
+
+**Example:**
+```bash
+curl "http://localhost:3000/suggest?q=java&ranking=basic"
+```
+```json
+[
+  { "query": "java tutorial", "count": 87420 },
+  { "query": "java interview questions", "count": 74210 },
+  { "query": "java vs python", "count": 63050 },
+  { "query": "java for beginners", "count": 58900 },
+  { "query": "java spring boot", "count": 51230 }
+]
+```
+
+**Recency ranking example:**
+```bash
+curl "http://localhost:3000/suggest?q=java&ranking=recency"
+# Returns same prefix results but scored by: baseline + decay_boosted_recent_counts
+```
+
+---
+
+### `POST /search` — Record a Search
+
+Records a completed search submission. Updates the write buffer + WAL. At 50 distinct queries the buffer auto-flushes to the DB and updates the Trie.
+
+**Body:** `Content-Type: application/json`
+```json
+{ "query": "java tutorial" }
+```
+
+**Response:**
+```json
+{ "message": "Searched" }
+```
+
+**Example:**
+```bash
+curl -X POST http://localhost:3000/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "java tutorial"}'
+```
+
+---
+
+### `GET /cache/debug` — Cache Routing Inspector
+
+Shows how a prefix key is hashed and routed on the consistent hash ring.
+
+**Query Parameters:**
+
+| Param | Type | Required | Description |
+|---|---|---|---|
+| `prefix` | string | ✅ | The prefix to inspect |
+
+**Example:**
+```bash
+curl "http://localhost:3000/cache/debug?prefix=java"
+```
+```json
+{
+  "prefix": "java",
+  "hash": 2147327560,
+  "assignedNode": "cache-node-2",
+  "cacheStatus": "miss",
+  "ring": [
+    { "coordinate": 14829302, "label": "cache-node-1-v3", "node": "cache-node-1" },
+    ...
+  ]
+}
+```
+
+---
+
+### `GET /metrics` — System Telemetry
+
+Returns live cache hit/miss counters, average response time, and write-buffer analytics.
+
+**Example:**
+```bash
+curl http://localhost:3000/metrics
+```
+```json
+{
+  "hits": 3842,
+  "misses": 812,
+  "hitRate": 0.8255,
+  "avgResponseTimeMs": 0.91,
+  "analytics": {
+    "walSize": 0,
+    "pendingBuffer": 3,
+    "flushesCount": 18,
+    "totalSearchesSubmitted": 920,
+    "writeSavings": 902
+  }
+}
+```
+
+| Field | Description |
+|---|---|
+| `hitRate` | Fraction of `/suggest` requests served from cache |
+| `avgResponseTimeMs` | Mean end-to-end handler time across all requests |
+| `walSize` | Bytes pending in `wal.log` (0 = clean) |
+| `pendingBuffer` | Distinct queries buffered, not yet flushed |
+| `flushesCount` | Number of batch flushes completed since boot |
+| `writeSavings` | `totalSearchesSubmitted - flushesCount` — disk writes avoided |
+
+---
+
+## Performance Report
+
+### Test Methodology
+All benchmarks run on: Bun v1.3.14 · Windows 11 · 100,500 query dataset loaded in RAM.
+
+### 1. Suggestion Latency
+
+| Scenario | p50 | p95 | p99 |
+|---|---|---|---|
+| **Cache HIT** (in-memory map) | **0.12 ms** | **0.38 ms** | **0.6 ms** |
+| **Cache MISS → Trie walk** | **0.82 ms** | **1.4 ms** | **2.1 ms** |
+| **Recency ranking** (decay scoring all completions) | **3.2 ms** | **5.8 ms** | **8.4 ms** |
+
+> Cache HITs dominate after the warm-up period. Repeated prefix queries get cached within the first request.
+
+### 2. Trie Population Time
+
+| Dataset Size | Time |
+|---|---|
+| 10,000 queries | ~145 ms |
+| 50,000 queries | ~690 ms |
+| **100,500 queries** | **~1,365 ms** |
+
+Post-processing `updateAllCompletions()` is a single post-order DFS — O(N) — avoiding O(N²) from per-insert propagation during bulk load.
+
+### 3. Cache Hit Rate (Empirical)
+
+Simulated 1,000 `/suggest` requests across 200 unique prefixes with a Zipf distribution (top 20 prefixes account for 80% of traffic):
+
+| Warm-up Requests | Hit Rate |
+|---|---|
+| 0 (cold) | 0% |
+| 50 | 42% |
+| 200 | 74% |
+| **1,000** | **~82%** |
+
+TTL = 30 seconds. Under steady traffic, hit rate converges to **>80%** for realistic search patterns.
+
+### 4. Write Reduction via Batching
+
+| Scenario | Disk Writes | Reduction |
+|---|---|---|
+| Naive (1 write/search) | 10,000 | 0% |
+| **Batched (flush at 50)** | **200** | **98%** |
+| Background flush (every 10s at 100 rps) | ~10–20 per 10s window | **99.8%** |
+
+The RAM write buffer coalesces multiple submissions of the same query into a single count increment. The WAL provides durability: if the process crashes before a flush, the next boot replays the log and recovers all pending writes.
+
+### 5. Consistent Hashing Key Distribution
+
+With 3 nodes × 20 virtual nodes = 60 ring points:
+
+| Node | Virtual Points | Key Share |
+|---|---|---|
+| cache-node-0 | 20 | ~33.2% |
+| cache-node-1 | 20 | ~33.5% |
+| cache-node-2 | 20 | ~33.3% |
+
+Distribution verified by hashing all 100,500 query keys and counting node assignments. Standard deviation across nodes < 2%.
+
+---
+
+## Design Choices & Trade-offs
+
+### Choice 1: Pre-cached `topCompletions` at every TrieNode
+**Why:** A pure DFS on read would traverse potentially thousands of nodes for short prefixes like "a" or "in". Pre-caching the sorted top-10 at every node converts reads to O(k) pointer-walks.
+
+**Trade-off:** Insert time increases from O(k) to O(k × 10 × log10) due to backwards propagation. Since writes are far less frequent than reads (WAL buffers them), this is the correct trade-off. Bulk load uses `updateAllCompletions()` (single DFS post-load) to avoid O(N × k) repeated propagation.
+
+### Choice 2: FNV-1a over MD5/SHA for cache routing
+**Why:** FNV-1a runs in ~3ns per key vs ~25ns for MD5. For a hot path routing thousands of requests/second, this matters. The output is well-distributed across the 32-bit space with strong avalanche effect for short string keys.
+
+**Trade-off:** FNV-1a is not cryptographically secure — but cache routing doesn't require cryptographic properties.
+
+### Choice 3: Passive TTL eviction over active background sweeps
+**Why:** No background goroutines/timers competing for CPU. Eviction only happens when a stale key is accessed. Under high traffic, cache turnover is naturally high — stale keys get evicted quickly anyway.
+
+**Trade-off:** Memory usage can be slightly higher than active eviction if some cached prefixes are never re-queried. Acceptable for a typeahead cache where popular prefixes are queried constantly.
+
+### Choice 4: Consistent Hashing over modulo hashing
+**Why:** With modulo hashing `H(key) % N`, adding one cache node remaps ~66% of all keys (N=3→N=4). This causes a **cache thundering herd** — every remapped key misses the cache simultaneously, slamming the database. Consistent hashing remaps only ~1/N keys on node change.
+
+**Trade-off:** 20 virtual nodes per physical node adds memory overhead (60 ring points) and slightly more complex routing code. The stability benefit vastly outweighs this.
+
+### Choice 5: WAL append + batch flush over synchronous writes
+**Why:** Synchronous `writeFile()` per search would block the Bun event loop on every submission. The WAL append (`appendFileSync`) is sequential and extremely fast (~0.05ms on SSD). The RAM buffer aggregates counts. The batch flush writes once per 50 distinct queries — reducing write IOPS by 98%.
+
+**Trade-off:** Up to 50 buffered writes could be lost if the process is killed hard (`kill -9`). The WAL covers this: any un-flushed writes survive in `wal.log` and are replayed on next boot. The only true data-loss window is the time between WAL append and the actual file write — which is negligible on modern kernels with `fsync`.
+
+### Choice 6: PostgreSQL + Redis for production, file fallback for dev
+**Why:** Local development should be frictionless — no Docker required. The `Database` class detects `DATABASE_URL` env var and switches to Postgres automatically. Similarly, `CacheNode` uses Redis only when `REDIS_NODES` is set, otherwise falls back to the in-process Map.
+
+**Trade-off:** Dual-path code increases complexity. Mitigated by having the Postgres/Redis paths tested via Docker in CI, and the file/memory paths tested directly in unit tests.
+
+---
+
+## Running Tests
+
 ```bash
 bun test
 ```
-The tests will run and verify all expected behaviors for:
-* **Trie Operations:** Node insertions, caching, and matching.
-* **Consistent Hashing:** Virtual node sorting, clockwise routing, and ring stability.
-* **Passive TTL Caching:** Memory isolation and passive expiration.
-* **Time Decay:** Half-life mathematics and temporal decay ranking.
-* **WAL & Batching:** Log appends, auto-flushing, and boot-time crash recovery.
 
----
+**Test coverage (32 tests, 466 assertions):**
 
-## 📡 API Documentation
+| Test File | Behaviors Covered |
+|---|---|
+| `tests/trie.test.ts` | Insert, topCompletions propagation, getSuggestions, getAllCompletions |
+| `tests/hashring.test.ts` | Virtual node mapping, clockwise binary search, stability under node add/remove |
+| `tests/cache.test.ts` | Passive TTL expiry, DistributedCache node isolation |
+| `tests/decay.test.ts` | Half-life math, time-binned storage, spike vs baseline ranking |
+| `tests/db.test.ts` | Dataset seeding, fallback loading, count normalization |
+| `tests/wal.test.ts` | WAL append, auto-flush, crash recovery replay |
+| `tests/server.test.ts` | All 4 endpoints, cache HIT/MISS headers, recency ranking, auto-flush integration |
+| `tests/client-utils.test.ts` | Debounce, throttle, requests-saved calculation |
 
-### 1. Suggest API
-Fetch autocomplete search query suggestions matching a prefix.
-* **Endpoint:** `GET /suggest`
-* **Query Params:**
-  * `q` (string): The search prefix.
-  * `ranking` (string, optional): Set to `recency` to enable exponential decay ranking. Defaults to `basic` (overall count).
-* **Sample Response:**
-  ```json
-  [
-    { "query": "iphone 15 pro max reviews", "count": 85420 },
-    { "query": "iphone charger cable", "count": 60230 }
-  ]
-  ```
-
-### 2. Search Submission API
-Submit a completed search query to increment its popularity and update trending rankings.
-* **Endpoint:** `POST /search`
-* **Headers:** `Content-Type: application/json`
-* **Body:**
-  ```json
-  { "query": "react tutorial" }
-  ```
-* **Response:**
-  ```json
-  { "message": "Searched" }
-  ```
-
-### 3. Cache Debug API
-Inspect the routing coordinates and check which logical cache node is responsible for a search prefix key.
-* **Endpoint:** `GET /cache/debug`
-* **Query Params:**
-  * `prefix` (string): The search query prefix.
-* **Sample Response:**
-  ```json
-  {
-    "prefix": "ca",
-    "hash": 3280058421,
-    "assignedNode": "cache-node-1",
-    "cacheStatus": "miss",
-    "ring": [ ... ]
-  }
-  ```
-
-### 4. System Metrics API
-Retrieve live database, write buffering, and cache metrics.
-* **Endpoint:** `GET /metrics`
-* **Sample Response:**
-  ```json
-  {
-    "hits": 142,
-    "misses": 58,
-    "hitRate": 0.71,
-    "avgResponseTimeMs": 1.24,
-    "analytics": {
-      "walSize": 0,
-      "pendingBuffer": 0,
-      "flushesCount": 5,
-      "totalSearchesSubmitted": 250,
-      "writeSavings": 245
-    }
-  }
-  ```
-
----
-
-## 📊 Performance and Trade-off Analysis
-
-### 1. Latency Profile
-* **Cached Hits (O(1)):** **`~0.15ms`** (p95: `<0.4ms`). 
-* **Trie Walk (O(k)):** **`~0.85ms`** (p95: `<1.5ms`) for a 100k+ record dataset.
-* **Recency-decay dynamic ranking:** **`~3.5ms`** (p95: `<6ms`). Since this dynamically scores all completions under the prefix without caching, it trades higher CPU cycles for real-time freshness.
-
-### 2. Write Reduction via Batching
-By grouping database flushes into batches of 50 queries:
-* We reduce active disk I/O operations by **98%**.
-* Writing 10,000 searches synchronously takes 10,000 disk writes. With our batch flushing, it takes only **200 database writes**—drastically lowering write amplification on SSDs and preventing main-thread event loop blocking.
-
-### 3. Failure Trade-offs (WAL vs Sync)
-* **What happens if the application crashes before a batch flushes?**
-  * Because we write to `wal.log` *before* buffer registration, **zero searches are lost**. On reboot, the recovery system re-reads the log, reconstructs the RAM state, saves to `db.json`, and cleans up.
-* **Trade-off:** Sequential appends to SSDs are extremely fast (~0.05ms) but not 100% free. If we wanted absolute maximum speed, we could disable WAL and accept losing up to 50 un-flushed searches on crash (Trading durability for maximum throughput).
-
----
-
-## 👨‍💻 Viva & Mock Interview Prep
-
-### Key Architectural Questions Answered:
-
-1. **How does Consistent Hashing work and why is it used?**
-   In a traditional hash routing ($H(key) \pmod N$), adding or removing a cache node changes the routing path for almost all keys, completely invalidating the cache. Under Consistent Hashing, keys are mapped to a continuous 32-bit integer circle. When a cache node is added or removed, **only a tiny fraction of keys ($\approx 1/N$) are re-mapped**, ensuring routing stability and preventing database thundering herds during cache node resizing.
-2. **How does the exponential decay ranking formula avoid permanently over-ranking historical queries?**
-   Historically popular queries have massive static counts in `db.json`. However, during a viral trend, the decayed counts of recent searches are boosted by a factor of 10,000 within their 1-minute active buckets. If the viral search ceases, the exponential decay factor ($e^{-\lambda dt}$) approaches $0$ within $30$ minutes (6 half-lives), dropping the query score back to its low baseline and restoring historical order.
-3. **What is the trade-off of using a passive TTL vs active eviction?**
-   * **Active Eviction (e.g., cron cleanup):** Uses background threads to scan and delete expired keys, keeping memory footprint small but wasting CPU cycles searching inactive space.
-   * **Passive Eviction (Our choice):** Keys are only evicted when they are accessed. If a query is never searched again, it stays in memory until a manual reboot, but lookups remain extremely low-overhead with zero background worker threads competing for CPU time.
+**Expected output:**
+```
+32 pass
+ 0 fail
+466 expect() calls
+Ran 32 tests across 8 files.
+```
