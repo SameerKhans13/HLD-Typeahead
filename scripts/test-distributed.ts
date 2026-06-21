@@ -3,7 +3,7 @@ import { app } from "../src/server"; // We can run the server programmatically t
 
 async function runDistributedTest() {
   console.log("==================================================");
-  console.log("⚡ ANTIGRAVITY DISTRIBUTED TYPEAHEAD INTEGRATION TEST ⚡");
+  console.log("⚡ DISTRIBUTED TYPEAHEAD INTEGRATION TEST ⚡");
   console.log("==================================================\n");
 
   const baseUrl = "http://localhost"; // In production, this will hit Nginx load balancer

@@ -1,4 +1,4 @@
-# Antigravity Typeahead
+# Distributed Typeahead System
 
 > **Ultra-fast, in-memory prefix-tree autocomplete system** — built with Bun + Elysia, backed by PostgreSQL, Redis, and Nginx in a distributed Docker architecture.
 
@@ -25,7 +25,7 @@
 
 ## System Overview
 
-Antigravity Typeahead solves the **high-load search autocomplete problem** — returning the top 10 relevant query completions for any prefix in under **1ms** at scale, while safely handling millions of concurrent search submissions without losing data.
+This Distributed Typeahead System solves the **high-load search autocomplete problem** — returning the top 10 relevant query completions for any prefix in under **1ms** at scale, while safely handling millions of concurrent search submissions without losing data.
 
 **Key capabilities:**
 - **100,500+ query** in-memory prefix tree with O(k) cached lookups
