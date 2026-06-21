@@ -37,7 +37,12 @@ const SUFFIXES = [
 const YEARS = ["2020", "2021", "2022", "2023", "2024", "2025", "2026", "2027", "2028"];      
 const COLORS_OR_VERSIONS = ["black", "white", "blue", "red", "green", "gold", "silver", "pro", "max", "mini", "v2", "v3", "v4", "v5"];
 
-export async function runSeed(outputPath: string, count: number = 100500): Promise<void> {   
+export interface SeedRecord {
+  query: string;
+  count: number;
+}
+
+export async function runSeed(outputPath: string, count: number = 100500): Promise<SeedRecord[]> {   
   const uniqueQueries = new Set<string>();
 
   // Base core queries
@@ -103,5 +108,7 @@ export async function runSeed(outputPath: string, count: number = 100500): Promi
 
   // Write file out
   writeFileSync(outputPath, JSON.stringify(dataset, null, 2), "utf-8");
+
+  return dataset;
 }
 export default runSeed;
