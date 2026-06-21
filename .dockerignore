@@ -1,0 +1,14 @@
+node_modules
+.git
+.gitignore
+*.log
+data/db.json
+data/wal.log
+data/test_*.json
+tests
+scripts/download_and_parse_aol.py
+README.md
+readme.md
+docker-compose.yml
+nginx
+.agents

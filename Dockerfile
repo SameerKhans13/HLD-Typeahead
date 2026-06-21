@@ -6,6 +6,7 @@ COPY package.json tsconfig.json ./
 COPY src ./src
 COPY public ./public
 COPY scripts ./scripts
+COPY data ./data
 
 # Install production dependencies
 RUN bun install --production

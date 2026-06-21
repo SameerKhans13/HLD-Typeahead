@@ -1,87 +1,175 @@
 version: "3.8"
 
+networks:
+  typeahead-net:
+    driver: bridge
+
 services:
   postgres:
     image: postgres:15-alpine
     container_name: typeahead-postgres
-    restart: always
+    restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: typeahead
+      PGDATA: /var/lib/postgresql/data/pgdata
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - typeahead-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d typeahead"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   redis-0:
     image: redis:7-alpine
     container_name: typeahead-redis-0
+    restart: unless-stopped
     ports:
       - "6379:6379"
+    networks:
+      - typeahead-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
   redis-1:
     image: redis:7-alpine
     container_name: typeahead-redis-1
+    restart: unless-stopped
     ports:
       - "6380:6379"
+    networks:
+      - typeahead-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
   redis-2:
     image: redis:7-alpine
     container_name: typeahead-redis-2
+    restart: unless-stopped
     ports:
       - "6381:6379"
+    networks:
+      - typeahead-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
   app-1:
     build: .
     container_name: typeahead-app-1
+    restart: unless-stopped
+    expose:
+      - "3000"
     environment:
-      - PORT=3000
-      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/typeahead
-      - REDIS_NODES=cache-node-0:redis-0:6379,cache-node-1:redis-1:6379,cache-node-2:redis-2:6379
+      PORT: 3000
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/typeahead
+      REDIS_NODES: cache-node-0:redis-0:6379,cache-node-1:redis-1:6379,cache-node-2:redis-2:6379
     depends_on:
-      - postgres
-      - redis-0
-      - redis-1
-      - redis-2
+      postgres:
+        condition: service_healthy
+      redis-0:
+        condition: service_healthy
+      redis-1:
+        condition: service_healthy
+      redis-2:
+        condition: service_healthy
+    networks:
+      - typeahead-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/metrics || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
 
   app-2:
     build: .
     container_name: typeahead-app-2
+    restart: unless-stopped
+    expose:
+      - "3000"
     environment:
-      - PORT=3000
-      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/typeahead
-      - REDIS_NODES=cache-node-0:redis-0:6379,cache-node-1:redis-1:6379,cache-node-2:redis-2:6379
+      PORT: 3000
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/typeahead
+      REDIS_NODES: cache-node-0:redis-0:6379,cache-node-1:redis-1:6379,cache-node-2:redis-2:6379
     depends_on:
-      - postgres
-      - redis-0
-      - redis-1
-      - redis-2
+      postgres:
+        condition: service_healthy
+      redis-0:
+        condition: service_healthy
+      redis-1:
+        condition: service_healthy
+      redis-2:
+        condition: service_healthy
+    networks:
+      - typeahead-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/metrics || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
 
   app-3:
     build: .
     container_name: typeahead-app-3
+    restart: unless-stopped
+    expose:
+      - "3000"
     environment:
-      - PORT=3000
-      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/typeahead
-      - REDIS_NODES=cache-node-0:redis-0:6379,cache-node-1:redis-1:6379,cache-node-2:redis-2:6379
+      PORT: 3000
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/typeahead
+      REDIS_NODES: cache-node-0:redis-0:6379,cache-node-1:redis-1:6379,cache-node-2:redis-2:6379
     depends_on:
-      - postgres
-      - redis-0
-      - redis-1
-      - redis-2
+      postgres:
+        condition: service_healthy
+      redis-0:
+        condition: service_healthy
+      redis-1:
+        condition: service_healthy
+      redis-2:
+        condition: service_healthy
+    networks:
+      - typeahead-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/metrics || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
 
   nginx:
     image: nginx:alpine
     container_name: typeahead-nginx
+    restart: unless-stopped
     ports:
       - "80:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
-      - app-1
-      - app-2
-      - app-3
+      app-1:
+        condition: service_healthy
+      app-2:
+        condition: service_healthy
+      app-3:
+        condition: service_healthy
+    networks:
+      - typeahead-net
 
 volumes:
   postgres_data:
