@@ -283,7 +283,7 @@ Returns up to **10** ranked query completions for a prefix.
 | Param | Type | Required | Description |
 |---|---|---|---|
 | `q` | string | ✅ | Search prefix (case-insensitive) |
-| `ranking` | `basic` \| `recency` | ❌ | `basic` = frequency (default, cached). `recency` = exponential decay (real-time, uncached) |
+| `ranking` | `basic` \| `recency` | ✅ | `basic` = frequency (default, cached). `recency` = exponential decay (real-time, uncached) |
 
 **Response headers:**
 - `X-Cache: HIT` — served from distributed cache
